@@ -6,18 +6,20 @@ description: 지금까지의 이해도 검증 기록을 보여준다
 
 ```bash
 QDIR="$(git rev-parse --git-dir)/quiz-gate"
-echo "=== 커버된 파일 수 ==="
-[ -f "$QDIR/covered.tsv" ] && wc -l < "$QDIR/covered.tsv" || echo 0
+if [ ! -d "$QDIR/passes" ]; then
+  echo "아직 검증 이력이 없습니다."
+  exit 0
+fi
+echo "=== 검증된 파일 경로 수 (중복 제외) ==="
+[ -f "$QDIR/covered.tsv" ] && cut -f2 "$QDIR/covered.tsv" | sort -u | wc -l || echo 0
 echo "=== 검증 횟수 ==="
-[ -d "$QDIR/passes" ] && find "$QDIR/passes" -name 'p-*.json' | wc -l || echo 0
+find "$QDIR/passes" -name 'p-*.json' | wc -l
 echo "=== 최근 5건 ==="
-[ -d "$QDIR/passes" ] && find "$QDIR/passes" -name 'p-*.json' | sort | tail -5
+find "$QDIR/passes" -name 'p-*.json' | sort | tail -5
 ```
 
-찾은 기록 파일들을 읽고 다음을 표로 정리해 보여줘라.
+모든 기록 파일(`passes/p-*.json`)을 읽고 다음을 표로 정리해 보여줘라.
 
-- 축별 1차 정답률 (`attempts == 1` 인 비율)
+- 축별 1차 정답률 (각 축에서 `attempts == 1 && gave_up == false` 인 비율)
 - `gave_up` 이 true 인 문항 수
-- 가장 자주 틀린 축
-
-기록이 없으면 아직 검증 이력이 없다고 알려줘라.
+- 가장 자주 틀린 축 (오답(`attempts > 1 && gave_up == false`)이 많은 축)
