@@ -206,3 +206,24 @@ mark_covered() {  # $1 = 경로
   [[ "$output" == *"o.ts"* ]]
   rm -rf "$other"
 }
+
+@test "세그먼트 끝의 -c 뒤에 오는 진짜 git commit(;)을 놓치지 않는다" {
+  printf 'C1\n' > c.ts; git add c.ts
+  run run_gate 'git -c; git commit -m x'
+  [[ "$output" == *"deny"* ]]
+  [[ "$output" == *"c.ts"* ]]
+}
+
+@test "세그먼트 끝의 -C 뒤에 오는 진짜 git commit(;)을 놓치지 않는다" {
+  printf 'C1\n' > c.ts; git add c.ts
+  run run_gate 'git -C; git commit -m x'
+  [[ "$output" == *"deny"* ]]
+  [[ "$output" == *"c.ts"* ]]
+}
+
+@test "세그먼트 끝의 -c 뒤에 오는 진짜 git commit(&&)을 놓치지 않는다" {
+  printf 'C1\n' > c.ts; git add c.ts
+  run run_gate 'git -c && git commit -m x'
+  [[ "$output" == *"deny"* ]]
+  [[ "$output" == *"c.ts"* ]]
+}
