@@ -5,6 +5,8 @@
   "author": {
     "name": "KkochiKkochi contributors"
   },
+  "homepage": "https://github.com/<owner>/kkochikkochi",
+  "repository": "https://github.com/<owner>/kkochikkochi",
   "license": "MIT",
   "keywords": ["gate", "comprehension", "quiz", "review", "git", "commit"]
 }
