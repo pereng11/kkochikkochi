@@ -1,0 +1,17 @@
+{
+  "description": "Comprehension gate before commit — blocks git commit until you can explain the change.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/gate.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
