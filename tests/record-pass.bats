@@ -73,6 +73,29 @@ VALID='{"questions":[{"axis":"facts","q":"무엇이 바뀌었나?","evidence":"c
   [ "$status" -eq 1 ]
 }
 
+@test "questions 가 문자열이면 거부한다" {
+  printf 'C1\n' > c.ts; git add c.ts
+  run record '{"questions":"abc"}'
+  [ "$status" -eq 1 ]
+  [ ! -f "$(qdir)/covered.tsv" ]
+  [ ! -d "$(qdir)/passes" ]
+}
+
+@test "questions 가 객체면 거부한다" {
+  printf 'C1\n' > c.ts; git add c.ts
+  run record '{"questions":{}}'
+  [ "$status" -eq 1 ]
+  [ ! -f "$(qdir)/covered.tsv" ]
+  [ ! -d "$(qdir)/passes" ]
+}
+
+@test "questions 가 정상 배열이면 여전히 기록된다" {
+  printf 'C1\n' > c.ts; git add c.ts
+  run record "$VALID"
+  [ "$status" -eq 0 ]
+  grep -q "c.ts" "$(qdir)/covered.tsv"
+}
+
 @test "여러 번 기록하면 covered.tsv 에 누적된다" {
   printf 'C1\n' > c.ts; git add c.ts
   record "$VALID"

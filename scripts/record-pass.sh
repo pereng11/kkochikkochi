@@ -20,9 +20,19 @@ command -v jq >/dev/null 2>&1 || die "jq 가 필요합니다"
 transcript="$(cat)"
 jq -e . >/dev/null 2>&1 <<<"$transcript" || die "transcript 가 올바른 JSON 이 아닙니다"
 
+# questions 는 반드시 배열이어야 한다. jq 의 length 는 문자열/객체에도
+# 다형적으로 동작하므로("abc"의 length 는 3), 타입을 먼저 확인하지 않으면
+# "질문 없음" 판정을 우회할 수 있다.
+jq -e '.questions | type == "array"' >/dev/null 2>&1 <<<"$transcript" \
+  || die "questions 는 배열이어야 합니다"
+
 n_questions="$(jq '.questions | length' <<<"$transcript" 2>/dev/null)" \
   || die "questions 배열을 읽을 수 없습니다"
-skipped="$(jq -r '.skipped_reason // ""' <<<"$transcript")"
+
+# skipped_reason 도 같은 구멍이 있다 — 문자열이 아닌 값(0, false, [], {})은
+# jq 의 `//` 에서 "존재함"으로 취급되어 사유 없는 스킵을 통과시킬 수 있다.
+# 문자열일 때만 사유로 인정한다.
+skipped="$(jq -r '.skipped_reason | if type == "string" then . else "" end' <<<"$transcript" 2>/dev/null)"
 
 # 문항 0개는 사유가 명시된 경우에만 허용한다.
 if [ "$n_questions" -eq 0 ] && [ -z "$skipped" ]; then
