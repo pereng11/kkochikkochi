@@ -23,8 +23,11 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/pending-set.sh" "git commit"
 |---|---|---|
 | 변경 본문 | `git diff --cached` | 변경 사실, 영향·리스크 |
 | 호출부·의존 | 변경된 심볼을 레포에서 Grep | 영향·리스크 |
+| 이전 동작 이력 | `git log -p` / `git show HEAD:<path>` 등으로 변경 전 실제 코드를 확인 | 오답 선택지("이전 버전의 실제 동작") |
 | 설계 근거 | **현재 대화 맥락** | 설계 의도 |
 | 레포 구조 | 관련 파일 읽기 | 재현 가능성 |
+
+`git diff --cached` 는 삭제된 줄을 보여줄 뿐, 함수 전체가 사라진 경우처럼 "이전에 실제로 어떻게 동작했는가"는 알려주지 않는다. 오답 선택지 규칙의 "이전 버전의 실제 동작"을 만족하려면 위 이력 조회가 필요할 때가 있다.
 
 **설계 의도의 근거는 diff에 없다.** 대화에서 "왜 이 방식을 골랐는지"가 논의되지 않았다면 그 축은 출제하지 않는다.
 
@@ -44,7 +47,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/pending-set.sh" "git commit"
 - **상한 5문항.** 억지로 채우지 않는다. 근거 있는 문항만 낸다
 - **하한 1문항.** 질문거리가 전혀 없으면(lockfile 재생성, 포매팅만) 0문항으로 하고 `skipped_reason` 에 사유를 적는다
 - 상한 5는 4축을 전부 담고 한 자리가 남는다. 남는 자리는 **영향·리스크** 축에 준다
-- 시간 목표 3분
+- **시간 목표 3분.** 한 번에 다 맞히는 이상적인 경우만이 아니라 §4의 오답 재시도 루프까지 포함한 목표다
 
 ### 출제 순서
 
@@ -54,7 +57,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/pending-set.sh" "git commit"
 
 1. **"그럴듯한 오해"에서 뽑는다.** 이전 버전의 실제 동작, 인접 함수가 실제로 하는 일
 2. **레포의 실제 문자열을 쓴다.** 실존하는 다른 경로·함수명. 지어낸 이름 금지
-3. **금지 선택지**: "변함 없음", "위 전부", "해당 없음", "모름"
+3. **금지 선택지**: "변함 없음", "위 전부", "해당 없음" — 코드를 읽지 않아도 정답인 척 소거할 수 있는 필러다. **"모르겠다"는 이 금지 대상이 아니다.** §3에서 모든 문항에 상시 포함하는 별도의 탈출구이며, 후보 정답이 아니므로 정답으로 채점되지 않는다. 이 문서 전체에서 표기는 "모르겠다"로 통일한다
 4. **정답 위치를 무작위화한다.** B·C 편향을 경계하라
 
 ### 근거 없는 문항은 폐기한다
@@ -67,11 +70,13 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/pending-set.sh" "git commit"
 
 ## 3. 출제
 
-객관식과 짧은 답은 `AskUserQuestion` 으로 낸다. 선택지에는 항상 **"모르겠다"** 를 포함한다.
+객관식과 짧은 답은 `AskUserQuestion` 으로 낸다. 선택지에는 항상 **"모르겠다"** 를 포함한다 — 이것은 후보 정답을 가장한 필러(§2의 금지 선택지)가 아니라 별도의 상시 탈출구이며, 선택해도 정답 처리되지 않고 §4의 "모르겠다" 분기로 이어진다.
 
 서술형은 일반 질문으로 내고 답변을 기다린다.
 
 ## 4. 채점과 오답 루프
+
+이 루프까지 포함해서 시간 목표가 3분이다. 오답이 나왔다고 서두르거나 루프를 생략하지 않는다.
 
 ```
 정답      → 다음 문항
@@ -93,6 +98,8 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/pending-set.sh" "git commit"
 
 전 문항 통과 후:
 
+### 예시 1 — 통과 기록 (여러 문항 형태를 함께 보여준다)
+
 ```bash
 cat <<'JSON' | bash "${CLAUDE_PLUGIN_ROOT}/scripts/record-pass.sh" "git commit"
 {
@@ -106,6 +113,26 @@ cat <<'JSON' | bash "${CLAUDE_PLUGIN_ROOT}/scripts/record-pass.sh" "git commit"
       "correct": "B",
       "attempts": 1,
       "gave_up": false
+    },
+    {
+      "axis": "impact",
+      "q": "이 변경이 깨뜨릴 수 있는 호출부는?",
+      "evidence": "src/auth/session.ts:88",
+      "format": "choice",
+      "answer": "A",
+      "correct": "A",
+      "attempts": 3,
+      "gave_up": true
+    },
+    {
+      "axis": "intent",
+      "q": "왜 캐시 대신 세션 재검증 방식을 골랐는가? (한 문장)",
+      "evidence": "대화 중 발언: \"캐시는 무효화 시점을 놓칠 위험이 있어서 뺐다\"",
+      "format": "free",
+      "answer": "무효화 시점을 놓칠 위험 때문에 캐시 대신 매번 재검증하도록 했다",
+      "correct": null,
+      "attempts": 1,
+      "gave_up": false
     }
   ],
   "skipped_reason": null
@@ -113,7 +140,31 @@ cat <<'JSON' | bash "${CLAUDE_PLUGIN_ROOT}/scripts/record-pass.sh" "git commit"
 JSON
 ```
 
+`attempts` 가 3이고 `gave_up` 이 true 인 두 번째 문항은 오답을 두 번 겪고 결국 "모르겠다"로 끝난 사례다 — 통과로 기록해도 되는 정상 형태다. 세 번째 문항처럼 `format` 이 `free` 면 `correct` 는 채점 기준이 없으므로 `null` 로 둔다.
+
+### 예시 2 — 출제할 것이 없을 때 (스킵)
+
+```bash
+cat <<'JSON' | bash "${CLAUDE_PLUGIN_ROOT}/scripts/record-pass.sh" "git commit"
+{
+  "questions": [],
+  "skipped_reason": "lockfile 재생성만 포함, 질문거리 없음"
+}
+JSON
+```
+
+`questions` 는 0개일 때도 **반드시 빈 배열 `[]` 로 존재**해야 한다. 필드 자체를 빼거나 `null` 로 두면 `record-pass.sh` 가 "questions 는 배열이어야 합니다"로 거부한다. 문항이 0개인 경우에만 `skipped_reason` 에 비어 있지 않은 문자열 사유를 적는다.
+
 `axis` 는 `facts` · `impact` · `intent` · `reproduce` 중 하나. `format` 은 `choice` · `short` · `free` 중 하나.
+
+### 실패 시
+
+`record-pass.sh` 가 0이 아닌 값으로 종료하면 기록되지 않은 것이다. 이때:
+
+1. **절대 사용자에게 퀴즈를 통과했다고 말하지 않는다.** 커밋은 여전히 막혀 있다
+2. **무작정 같은 내용으로 재시도하지 않는다.** stderr 메시지를 그대로 사용자에게 보여준다
+3. stderr 가 가리키는 문제(예: `questions` 가 배열이 아님, 서술형 답변이 공백)에 맞춰 transcript 를 고쳐 **한 번 더** 시도한다
+4. 그래도 실패하면 멈추고 사용자에게 상황을 보고한다. 반복 재시도하지 않는다
 
 기록이 끝나면 사용자에게 커밋을 다시 시도하라고 알린다.
 
