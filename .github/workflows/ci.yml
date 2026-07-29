@@ -11,8 +11,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install bats
-        run: sudo apt-get update && sudo apt-get install -y bats
+      - name: Install bats and shellcheck
+        run: sudo apt-get update && sudo apt-get install -y bats shellcheck
 
       - name: Configure git identity
         run: |
@@ -24,9 +24,15 @@ jobs:
         run: bats tests/
 
       - name: Lint shell scripts
-        run: shellcheck scripts/*.sh hooks/*.sh tests/helper.bash
+        run: |
+          # shellcheck 가 러너 이미지에 우연히 들어 있는 것에 기대지 않는다.
+          # 없어졌는데 lint 가 조용히 건너뛰어지면 그게 더 나쁘다.
+          shellcheck --version
+          shellcheck scripts/*.sh hooks/*.sh tests/helper.bash
 
       - name: Validate JSON
         run: |
           jq . hooks/hooks.json > /dev/null
           jq . .claude-plugin/plugin.json > /dev/null
+          # 첫 설치가 유일하게 의존하는 파일이다. 빠뜨리면 안 된다.
+          jq . .claude-plugin/marketplace.json > /dev/null
