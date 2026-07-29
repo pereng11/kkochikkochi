@@ -89,6 +89,41 @@ teardown() { teardown_repo; }
   [ "$status" -eq 2 ]
 }
 
+@test "rebase(merge 백엔드) 충돌 진행 중이면 종료코드 2" {
+  git checkout -qb feat
+  printf 'feat\n' > a.ts
+  git commit -qam feat
+  git checkout -q -
+  printf 'main\n' > a.ts
+  git commit -qam main
+  git rebase feat >/dev/null 2>&1 || true
+  [ -d "$(git rev-parse --git-dir)/rebase-merge" ]
+  run pending 'git commit -m "x"'
+  [ "$status" -eq 2 ]
+}
+
+@test "rebase(apply 백엔드) 충돌 진행 중이면 종료코드 2" {
+  git checkout -qb feat
+  printf 'feat\n' > a.ts
+  git commit -qam feat
+  git checkout -q -
+  printf 'main\n' > a.ts
+  git commit -qam main
+  git rebase --apply feat >/dev/null 2>&1 || true
+  [ -d "$(git rev-parse --git-dir)/rebase-apply" ]
+  run pending 'git commit -m "x"'
+  [ "$status" -eq 2 ]
+}
+
+@test "revert --no-commit 진행 중이면 종료코드 2" {
+  printf 'A2\n' > a.ts
+  git commit -qam second
+  git revert --no-commit HEAD >/dev/null 2>&1 || true
+  [ -e "$(git rev-parse --git-dir)/REVERT_HEAD" ]
+  run pending 'git commit -m "x"'
+  [ "$status" -eq 2 ]
+}
+
 @test "SHA 는 항상 40자리다" {
   printf 'C1\n' > c.ts
   git add c.ts
