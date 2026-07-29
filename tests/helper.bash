@@ -33,3 +33,22 @@ seed_repo() {
 pending() {
   bash "$PLUGIN_ROOT/scripts/pending-set.sh" "$1"
 }
+
+# 훅 stdin JSON 을 만들어 gate.sh 에 흘려넣는다.
+run_gate() {  # $1 = command 문자열
+  local payload
+  payload=$(jq -n --arg c "$1" --arg cwd "$PWD" \
+    '{tool_name:"Bash", cwd:$cwd, tool_input:{command:$c}}')
+  echo "$payload" | bash "$PLUGIN_ROOT/hooks/gate.sh"
+}
+
+record_pass() {  # $1 = transcript JSON, $2 = command
+  echo "$1" | bash "$PLUGIN_ROOT/scripts/record-pass.sh" "$2"
+}
+
+# `git diff --cached --raw` 가 말하는 (SHA, 경로) 집합. pending-set 의 출력은
+# 절대 이것의 부분집합이 될 수 없다(never-shrink 불변식).
+staged_set() {
+  git -c core.quotePath=false diff --cached --raw --abbrev=40 --no-renames |
+    awk -F'\t' '{ split($1, f, " "); print f[4] "\t" $2 }'
+}

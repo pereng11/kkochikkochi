@@ -5,15 +5,22 @@ load helper
 setup() { setup_repo; seed_repo; }
 teardown() { teardown_repo; }
 
-# 훅 stdin JSON 을 만들어 gate.sh 에 흘려넣는다.
-run_gate() {  # $1 = command 문자열
-  local payload
-  payload=$(jq -n --arg c "$1" --arg cwd "$PWD" \
-    '{tool_name:"Bash", cwd:$cwd, tool_input:{command:$c}}')
-  echo "$payload" | bash "$PLUGIN_ROOT/hooks/gate.sh"
-}
+# run_gate 는 helper.bash 에 있다.
 
 covered_dir() { echo "$(git rev-parse --git-dir)/quiz-gate"; }
+
+# "출력이 비었다" 는 통과와 크래시를 구별하지 못한다. 같은 픽스처에서
+# 커버리지를 지우면 deny 가 나오는지 확인해, 게이트가 살아 있는 상태에서
+# 통과를 선택했다는 것을 증명한다.
+assert_denies_without_coverage() {  # $1 = command 문자열
+  local out saved
+  saved="$(covered_dir)/covered.tsv"
+  [ -f "$saved" ] || return 1
+  mv "$saved" "$saved.bak"
+  out="$(run_gate "$1")"
+  mv "$saved.bak" "$saved"
+  [[ "$out" == *"deny"* ]]
+}
 
 mark_covered() {  # $1 = 경로
   mkdir -p "$(covered_dir)"
@@ -44,6 +51,9 @@ mark_covered() {  # $1 = 경로
   run run_gate 'git commit -m "x"'
   [ "$status" -eq 0 ]
   [ -z "$output" ]
+  # 대조군: 커버리지만 치우면 같은 입력에서 deny 가 나온다 —
+  # 위의 빈 출력이 크래시가 아니라 판정 결과임을 증명한다.
+  assert_denies_without_coverage 'git commit -m "x"'
 }
 
 @test "커버된 뒤 파일을 고치면 다시 deny 한다" {
@@ -62,6 +72,7 @@ mark_covered() {  # $1 = 경로
   git add d.ts
   run run_gate 'git commit -m "d"'
   [ -z "$output" ]
+  assert_denies_without_coverage 'git commit -m "d"'
 }
 
 @test "Bash 가 아닌 툴은 무시한다" {
@@ -74,18 +85,25 @@ mark_covered() {  # $1 = 경로
   printf 'C1\n' > c.ts; git add c.ts
   run run_gate 'git status'
   [ -z "$output" ]
+  # 양성 대조군: 같은 픽스처에서 진짜 커밋은 막힌다.
+  run run_gate 'git commit -m "x"'
+  [[ "$output" == *"deny"* ]]
 }
 
 @test "git revert 는 게이트하지 않는다" {
   printf 'C1\n' > c.ts; git add c.ts
   run run_gate 'git revert HEAD'
   [ -z "$output" ]
+  run run_gate 'git commit -m "x"'
+  [[ "$output" == *"deny"* ]]
 }
 
 @test "commit-tree 는 commit 으로 오인하지 않는다" {
   printf 'C1\n' > c.ts; git add c.ts
   run run_gate 'git commit-tree abc123'
   [ -z "$output" ]
+  run run_gate 'git commit -m "x"'
+  [[ "$output" == *"deny"* ]]
 }
 
 @test "복합 커맨드(cd x && git commit)도 잡는다" {
@@ -104,6 +122,8 @@ mark_covered() {  # $1 = 경로
   printf 'C1\n' > c.ts; git add c.ts
   run run_gate 'echo "run git commit later"'
   [ -z "$output" ]
+  run run_gate 'git commit -m "x"'
+  [[ "$output" == *"deny"* ]]
 }
 
 @test "빈 커밋(스테이징 없음)은 통과한다" {
@@ -119,6 +139,7 @@ mark_covered() {  # $1 = 경로
   git add c.ts
   run run_gate 'git commit -m "x"'
   [ -z "$output" ]
+  assert_denies_without_coverage 'git commit -m "x"'
 }
 
 @test "fail-open: git 레포가 아니면 통과한다" {
