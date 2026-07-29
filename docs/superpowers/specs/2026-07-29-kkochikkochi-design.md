@@ -19,7 +19,7 @@
 
 - 커밋 직전에 사람의 이해를 강제로 검증한다
 - 이해를 증명하지 못하면 커밋을 **실제로 차단**한다
-- 검증에 걸리는 시간은 전부 정답일 때 **1분 이내**
+- 검증에 걸리는 시간은 오답 루프를 포함해 **3분 이내** (전형값 40~65초)
 - 커밋 이외의 관문(PR, 배포 등)으로 확장 가능한 구조
 
 **비목표**
@@ -169,16 +169,17 @@ v1에서는 아무것도 하지 않는다. `covered.tsv`는 한 줄 약 60바이
 - **상한 5문항.** 억지로 채우지 않는다 — 근거 있는 문항만 낸다. 상한은 큰 변경에서만 닿는다
 - **하한 1문항.** 예외적으로, 질문할 거리가 전혀 없으면(lockfile 재생성, 포매팅만) **0문항 + 사유 기록** 후 통과한다. `package-lock.json`에 퀴즈를 내면 도구가 웃음거리가 된다
 - 서술형은 **조건부** — 대화 맥락에 명확한 설계 결정이 있을 때만. 단순 버그 수정이면 내지 않는다
-- 시간 목표는 **전부 정답일 때** 기준. 오답 루프 진입 시 초과는 의도된 비용
+- **시간 목표 3분.** 상한 5문항에 오답 루프까지 포함한 전체 목표다
 
-**1분은 상한이 아니라 전형값의 목표다.** 소요 시간 근거는 객관식 약 20초, 짧은 답 약 20초, 서술 한 문장 약 25초.
+소요 시간 근거는 객관식 약 20초, 짧은 답 약 20초, 서술 한 문장 약 25초.
 
 | | 문항 수 | 소요 |
 |---|---|---|
 | 전형값 | 2~3 | 약 40~65초 |
-| 상한 | 5 | 약 100초 |
+| 상한, 전부 정답 | 5 | 약 100초 |
+| 상한, 오답 루프 포함 | 5 + 재출제 | 3분 |
 
-상한에 닿는다는 것은 변경 규모가 그만큼 크다는 뜻이므로 100초는 감수한다. 상한을 낮춰 큰 변경을 얕게 검증하는 것보다, 큰 변경에서만 길어지는 편이 낫다.
+3분을 넘는다면 문항이 과하거나 변경 규모가 지나치게 크다는 신호다. v1에서는 강제로 중단하지 않고 목표로만 둔다.
 
 ### 7.3 축 우선순위와 출제 순서
 
@@ -250,20 +251,96 @@ LLM이 자기가 쓴 코드에 문제를 내면 오답이 너무 티가 나서, 
 
 ## 8. 플러그인 구조
 
+널리 쓰이는 플러그인 저장소(`superpowers`, `security-guidance`, `ralph-loop`, `caveman`)의 구조를 조사해 관례를 따른다.
+
 ```
 kkochikkochi/
 ├── .claude-plugin/plugin.json
-├── hooks/hooks.json                 PreToolUse 등록
+├── hooks/
+│   ├── hooks.json                   PreToolUse 등록
+│   └── gate.sh                      훅 진입점. 판정만, LLM 없음
 ├── scripts/
-│   ├── pending-set.sh               "커밋될 (SHA, 경로)" 계산   ← 단일 진실 공급원
-│   ├── gate.sh                      판정만. LLM 없음
-│   └── record-pass.sh               통과 기록
+│   ├── pending-set.sh               "커밋될 (SHA, 경로)" 계산  ← 훅·스킬 공용
+│   └── record-pass.sh               통과 기록. 스킬이 호출
 ├── skills/kkochikkochi/SKILL.md     유일한 LLM 컴포넌트
 ├── commands/{kk,kk-log}.md
-└── README.md
+├── tests/
+│   ├── fixtures/                    픽스처 레포 생성 스크립트
+│   ├── pending-set.bats
+│   ├── gate.bats
+│   └── record-pass.bats
+├── .github/workflows/ci.yml         bats 실행 + shellcheck
+├── docs/
+│   ├── DECISIONS.md
+│   └── superpowers/specs/
+├── README.md                        어원 + 설치 + 동작 원리
+├── CHANGELOG.md
+├── CONTRIBUTING.md
+├── LICENSE                          MIT
+├── .gitignore
+└── .editorconfig
 ```
 
 명명 규약: 식별자는 소문자 `kkochikkochi`, 표시명은 `KkochiKkochi`. 플러그인 이름이 커맨드 앞에 붙으므로 커맨드는 짧게 (`/kk`, `/kk-log`).
+
+### 8.1 `hooks/` 와 `scripts/` 의 구분
+
+조사한 플러그인들의 관례가 갈린다.
+
+| 플러그인 | 방식 |
+|---|---|
+| `ralph-loop` | `hooks/stop-hook.sh`(훅 진입점) + `scripts/setup-*.sh`(사용자 유틸) |
+| `security-guidance` | 훅 관련 코드 전부 `hooks/` (`gitutil.py`, `diffstate.py` 등) |
+| `superpowers` | 둘 다 사용 |
+
+우리는 **호출 주체**로 나눈다. `gate.sh`는 훅만 호출하므로 `hooks/`, `pending-set.sh`와 `record-pass.sh`는 스킬도 호출하므로 `scripts/`. 디렉터리가 의존 방향을 드러낸다.
+
+### 8.2 단일 저장소 = 플러그인 배포물
+
+`caveman`은 TypeScript 모노레포에서 `plugins/caveman/`로 산출물을 동기화하는 CI를 둔다. 컴파일 산출물이 있기 때문이다.
+
+**우리는 빌드 단계가 없다** — 셸 스크립트와 마크다운이 그대로 배포물이다. 저장소 루트가 곧 플러그인 루트이며, 동기화 CI를 두지 않는다. 소스와 배포물이 갈라질 여지를 만들지 않는 편이 낫다.
+
+### 8.3 `plugin.json`
+
+`superpowers`가 가장 완전한 필드 집합을 쓴다. 이를 따른다.
+
+```json
+{
+  "name": "kkochikkochi",
+  "version": "0.1.0",
+  "description": "A comprehension gate for AI-assisted coding. Blocks the commit until you can explain what changed.",
+  "author": { "name": "...", "email": "..." },
+  "homepage": "https://github.com/<owner>/kkochikkochi",
+  "repository": "https://github.com/<owner>/kkochikkochi",
+  "license": "MIT",
+  "keywords": ["gate", "comprehension", "quiz", "review", "git", "commit"]
+}
+```
+
+### 8.4 `hooks/hooks.json`
+
+```json
+{
+  "description": "Comprehension gate before commit.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/gate.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+경로는 반드시 `${CLAUDE_PLUGIN_ROOT}`를 쓴다 — 조사한 플러그인 전부가 이 규약을 따른다. `timeout`은 짧게 잡는다. 게이트는 해시 비교뿐이라 10초면 충분하고, 길게 잡으면 훅이 멈췄을 때 사용자가 오래 붙잡힌다.
 
 ## 9. 인터페이스 계약
 
@@ -290,6 +367,8 @@ kkochikkochi/
 ```
 
 매처는 넓게 잡는다 (`git -C <path> commit`, `cd x && git commit` 포함). 애매하면 deny 쪽으로 기운다.
+
+**훅 설정의 `if` 필드를 쓰지 않는 이유** — 훅 항목에는 `"if": "Bash(git commit:*)"` 같은 세밀한 매처가 있고 `security-guidance`가 실제로 이를 사용한다. 그러나 이 문법은 접두 매칭이라 `cd sub && git commit`이나 `git -C path commit`을 놓친다. 게이트에서는 누락이 곧 실패이므로, `matcher: "Bash"`로 넓게 받고 `gate.sh` 안에서 직접 파싱한다. 파싱 비용은 무시할 수준이고, 놓친 커밋은 되돌릴 수 없다.
 
 ### `record-pass.sh`
 
@@ -331,8 +410,11 @@ kkochikkochi/
 pending-set.sh   수정 / 신규 / 삭제 / rename / -a / pathspec /
                  --amend / 빈 diff / 레포 아님
 gate.sh          covered.tsv 픽스처 × pending 조합 → allow/deny 판정표
+                 + 커맨드 파싱 (cd x && git commit, git -C path commit)
 record-pass.sh   거부 조건(빈 문항, 공백 서술)
 ```
+
+`bats`로 작성해 `tests/`에 둔다. CI(`.github/workflows/ci.yml`)에서 `bats` 실행과 `shellcheck`를 함께 돌린다. 픽스처 레포는 `tests/fixtures/`의 생성 스크립트로 매번 새로 만든다 — 커밋된 `.git` 디렉터리를 저장소에 넣지 않는다.
 
 **SKILL.md는 자동 테스트가 어렵다.** 문항 품질("오답이 그럴듯한가")은 기계로 측정되지 않는다. `superpowers/skills/writing-skills/testing-skills-with-subagents.md` 방식으로, 서브에이전트에게 실제 diff를 주고 출제시킨 뒤 문항을 사람이 평가하는 루프로 간다.
 
