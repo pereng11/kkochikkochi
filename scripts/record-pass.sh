@@ -55,19 +55,22 @@ mkdir -p "$qdir/passes" || die "상태 디렉터리를 만들 수 없습니다"
 
 pass_id="p-$(date -u +%Y%m%d-%H%M%S)"
 
-# covered.tsv 에 추가
-while IFS=$'\t' read -r sha path; do
-  [ -n "$sha" ] || continue
-  printf '%s\t%s\t%s\n' "$sha" "$path" "$pass_id" >> "$qdir/covered.tsv"
-done <<<"$pending"
-
-# 문답 전문 저장
+# 문답 전문을 먼저 저장하고, 그것이 안전하게 자리잡은 뒤에만 covered.tsv 에
+# 커버리지를 기록한다. 순서를 반대로 하면(커버리지 라인을 먼저 쓰면)
+# 전문 저장이 실패했을 때 감사 기록 없는 "유령 커버리지"가 covered.tsv 에
+# 영원히 남아 gate.sh 를 조용히 무력화한다.
+#
+# 같은 디렉터리에 임시 파일로 먼저 쓰고 mv 로 옮겨, 쓰다 만 JSON 이
+# passes/ 아래에 절대 보이지 않게 한다(mv 는 같은 파일시스템에서 원자적).
 covered_json="$(
   while IFS=$'\t' read -r sha path; do
     [ -n "$sha" ] || continue
     jq -n --arg p "$path" --arg s "$sha" '{key: $p, value: $s}'
   done <<<"$pending" | jq -s 'from_entries'
 )"
+
+tmp_pass="$(mktemp "$qdir/passes/.tmp.XXXXXX" 2>/dev/null)" \
+  || die "임시 파일을 만들 수 없습니다"
 
 jq -n \
   --arg id "$pass_id" \
@@ -77,7 +80,18 @@ jq -n \
   --argjson transcript "$transcript" \
   '{v: 1, pass_id: $id, at: $at, head: $head,
     covered: $covered, transcript: $transcript}' \
-  > "$qdir/passes/$pass_id.json" || die "기록 파일을 쓸 수 없습니다"
+  > "$tmp_pass" || { rm -f "$tmp_pass"; die "기록 파일을 쓸 수 없습니다"; }
+
+mv "$tmp_pass" "$qdir/passes/$pass_id.json" \
+  || { rm -f "$tmp_pass"; die "기록 파일을 옮길 수 없습니다"; }
+
+# 전문이 안전하게 자리잡았으니 이제 covered.tsv 에 추가한다. 이 추가가
+# 실패하면 전문은 있는데 커버리지가 없는 상태가 되지만, 그 방향은
+# 안전하다 — 사용자는 그저 다시 퀴즈를 통과해야 할 뿐이다.
+while IFS=$'\t' read -r sha path; do
+  [ -n "$sha" ] || continue
+  printf '%s\t%s\t%s\n' "$sha" "$path" "$pass_id" >> "$qdir/covered.tsv"
+done <<<"$pending"
 
 echo "$pass_id"
 exit 0

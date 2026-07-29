@@ -58,6 +58,8 @@ VALID='{"questions":[{"axis":"facts","q":"무엇이 바뀌었나?","evidence":"c
   bad='{"questions":[{"axis":"intent","q":"왜?","evidence":"대화","format":"free","answer":"   ","correct":null,"attempts":1,"gave_up":false}]}'
   run record "$bad"
   [ "$status" -eq 1 ]
+  [ ! -f "$(qdir)/covered.tsv" ]
+  [ ! -d "$(qdir)/passes" ]
 }
 
 @test "skipped_reason 이 있으면 문항 0개라도 기록한다" {
@@ -71,6 +73,8 @@ VALID='{"questions":[{"axis":"facts","q":"무엇이 바뀌었나?","evidence":"c
   printf 'C1\n' > c.ts; git add c.ts
   run record 'not json at all'
   [ "$status" -eq 1 ]
+  [ ! -f "$(qdir)/covered.tsv" ]
+  [ ! -d "$(qdir)/passes" ]
 }
 
 @test "questions 가 문자열이면 거부한다" {
@@ -94,6 +98,22 @@ VALID='{"questions":[{"axis":"facts","q":"무엇이 바뀌었나?","evidence":"c
   run record "$VALID"
   [ "$status" -eq 0 ]
   grep -q "c.ts" "$(qdir)/covered.tsv"
+}
+
+@test "전문 저장이 실패하면 covered.tsv 에 유령 라인을 남기지 않는다" {
+  if [ "$(id -u)" -eq 0 ]; then
+    skip "root 로 실행하면 읽기 전용 디렉터리가 쓰기를 막지 못한다"
+  fi
+  printf 'C1\n' > c.ts; git add c.ts
+  mkdir -p "$(qdir)/passes"
+  chmod 555 "$(qdir)/passes"
+  run record "$VALID"
+  chmod 755 "$(qdir)/passes"
+  [ "$status" -ne 0 ]
+  if [ -f "$(qdir)/covered.tsv" ]; then
+    run grep -q "c.ts" "$(qdir)/covered.tsv"
+    [ "$status" -ne 0 ]
+  fi
 }
 
 @test "여러 번 기록하면 covered.tsv 에 누적된다" {
