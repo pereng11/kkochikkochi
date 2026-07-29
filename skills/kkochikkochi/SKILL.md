@@ -11,18 +11,47 @@ description: Use when a commit is blocked by the KkochiKkochi gate, or when the 
 
 ## 0. 차단된 커맨드를 먼저 확보한다 — 가장 중요한 단계
 
-훅이 커밋을 막으면 deny 사유 끝에 **차단된 커맨드 원문**이 실려 온다:
+훅이 커밋을 막으면 deny 사유 끝에 **차단된 커맨드 원문**이 실려 온다. 형태는
+이렇다 — `KKOCHI_CMD` 로 시작하는 두 줄 **사이**의 내용이 커맨드 전부다:
+
+> 차단된 커맨드 — 아래 KKOCHI_CMD 두 줄 **사이**의 내용이 전부다. (…)
+> KKOCHI_CMD
+> git commit -am "x"
+> KKOCHI_CMD
+
+마커는 커맨드 내용과 충돌하지 않도록 훅이 계산한다. 커맨드 안에 `KKOCHI_CMD`
+가 이미 있으면 `KKOCHI_CMD_1`, `KKOCHI_CMD_2` … 로 바뀌므로, **사유에 실제로
+찍혀 있는 마커**를 보고 그 사이를 잘라낸다. 여러 줄이면 여러 줄 전부가 커맨드다.
+
+이 문자열을 `<BLOCKED_COMMAND>` 로 삼는다.
+
+### 셸에 넣을 때: 작은따옴표 이스케이프 (건너뛰면 커밋이 영구히 막힌다)
+
+아래 호출들은 `<BLOCKED_COMMAND>` 를 작은따옴표로 감싸 넘긴다. 커맨드 안에
+작은따옴표(`'`)가 하나라도 있으면 — 영어 커밋 메시지에서는 흔하다 —
+따옴표가 그 자리에서 닫혀 셸 문법 오류가 난다:
 
 ```
-차단된 커맨드 — 스킬은 이 문자열을 **그대로** pending-set.sh 와
-record-pass.sh 의 인자로 넘길 것:
-```
-git commit -am "x"
-```
+git commit -m "don't fix -- a.ts"
+→ pending-set.sh 'git commit -m "don't fix -- a.ts"'
+→ unexpected EOF while looking for matching '"'      ← 스크립트가 실행조차 안 된다
 ```
 
-이 문자열을 `<BLOCKED_COMMAND>` 로 삼는다. 아래 모든 스크립트 호출에서 이것을
-**한 글자도 바꾸지 않고** 그대로 인자로 넘긴다.
+그러면 퀴즈도 못 내고 기록도 못 해서 **커밋이 영원히 막힌다.** 이 스킬이
+막으려는 바로 그 교착이다.
+
+**규칙: 작은따옴표로 감쌀 때 커맨드 안의 `'` 를 전부 `'\''` 로 바꾼다.**
+
+| 원본 커맨드 | 셸에 넣는 형태 |
+|---|---|
+| `git commit -m "don't"` | `'git commit -m "don'\''t"'` |
+| `git commit -m 'a'` | `''\''git commit -m '\''a'\'''` |
+
+**이것은 커맨드 내용을 바꾸는 것이 아니다.** 셸이 작은따옴표를 벗겨내면
+스크립트가 받는 인자는 원본과 정확히 같은 문자열이다 — 순수하게 셸 인용
+문제이고, "그대로 넘긴다"는 요구와 충돌하지 않는다. 이스케이프를 빼는
+"단순화"를 하지 말 것. 반대로 커맨드의 내용 자체(옵션, 경로, 메시지)는
+**한 글자도 바꾸지 않는다.**
 
 **`"git commit"` 으로 대체하지 않는다.** 무엇이 커밋되는지는 커맨드에 달려 있다
 — `git commit -am x` 는 워크트리 수정본을 담고 `git commit -m x` 는 담지 않는다.
@@ -130,10 +159,9 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/pending-set.sh" '<BLOCKED_COMMAND>'
 
 ### 예시 1 — 통과 기록 (여러 문항 형태를 함께 보여준다)
 
-```bash
 `<BLOCKED_COMMAND>` 는 §0 에서 확보한 그 문자열이다. `pending-set.sh` 에 넘긴
 것과 **반드시 같아야** 한다 — 다르면 기록한 집합과 훅이 검사하는 집합이 갈려
-커밋이 계속 막힌다.
+커밋이 계속 막힌다. §0 의 `'` → `'\''` 이스케이프도 여기 똑같이 적용한다.
 
 ```bash
 cat <<'JSON' | bash "${CLAUDE_PLUGIN_ROOT}/scripts/record-pass.sh" '<BLOCKED_COMMAND>'

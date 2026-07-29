@@ -119,6 +119,50 @@ Co-Authored-By: Someone <s@example.com>"'
   [[ "$output" == *"$(git hash-object a.ts)"* ]]
 }
 
+@test "--pathspec-from-file: 파일 안의 경로도 게이트된다" {
+  # 커밋될 경로가 인자가 아니라 파일 안에 있고 이 스크립트는 그 파일을
+  # 읽지 않는다. 한때 두 옵션이 "아는 옵션" 으로 등록되어 unknown 이
+  # 켜지지 않았고, 그래서 파일에 적힌 경로가 통째로 게이트를 빠져나갔다.
+  mixed_state
+  printf 'a.ts\n' > list
+  local wt; wt="$(git hash-object a.ts)"
+  run pending 'git commit --pathspec-from-file=list -m x'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$wt"$'\t'"a.ts"* ]]
+  # 값이 별도 토큰인 형태도 같아야 한다.
+  run pending 'git commit --pathspec-from-file list -m x'
+  [[ "$output" == *"$wt"$'\t'"a.ts"* ]]
+  # --pathspec-file-nul 은 단짝이다. 이것만 있어도 합집합이어야 한다.
+  run pending 'git commit --pathspec-file-nul -m x'
+  [[ "$output" == *"$wt"$'\t'"a.ts"* ]]
+}
+
+@test "--pathspec-from-file: 실제 커밋되는 파일이 deny 사유에 뜬다" {
+  # 재현의 핵심 — git 은 list 에 적힌 a.ts 만 커밋하는데, 예전 게이트는
+  # 그 커밋이 담지도 않는 c.ts 로만 deny 했다. c.ts 가 커버되고 나면
+  # a.ts 는 검증 없이 나갔다.
+  mixed_state
+  printf 'a.ts\n' > list
+  run run_gate 'git commit --pathspec-from-file=list -m x'
+  [[ "$output" == *"deny"* ]]
+  [[ "$output" == *"a.ts"* ]]
+}
+
+@test "화이트리스트 감사: 파일 집합을 바꾸는 옵션은 인식 목록에 없다" {
+  # 인식 목록은 손으로 관리하는 화이트리스트다. 항목을 추가하는 것은
+  # 안전성 판단이므로, "무엇이 커밋되는지 바꾸는" 옵션이 목록에 들어오면
+  # 여기서 잡는다. a.ts 는 unstaged 라서 unknown 이 켜져야만 나타난다.
+  mixed_state
+  local wt opt; wt="$(git hash-object a.ts)"
+  for opt in --pathspec-from-file --pathspec-file-nul --interactive --patch; do
+    run pending "git commit $opt zzz -m x"
+    if [[ "$output" != *"$wt"* ]]; then
+      echo "$opt 가 인식 목록에 있어 unknown 이 켜지지 않는다 — 게이트 구멍" >&2
+      return 1
+    fi
+  done
+}
+
 @test "왕복: 모든 커맨드 형태에서 deny → 같은 커맨드로 record → allow" {
   local form out
   while IFS= read -r form; do
@@ -151,6 +195,61 @@ Co-Authored-By: Someone <s@example.com>"'
   mixed_state
   run run_gate 'git commit -am "x"'
   [[ "$output" == *'git commit -am '* ]]
+}
+
+@test "작은따옴표가 든 커밋 메시지도 왕복한다" {
+  # 훅이 준 커맨드를 스킬이 작은따옴표로 감싸 넘기는데, 메시지 안의 '
+  # 가 그 자리에서 따옴표를 닫아 셸 문법 오류가 났다. 스크립트가 실행조차
+  # 되지 않으니 퀴즈도 기록도 불가능 — 커밋이 영구히 막혔다.
+  # SKILL.md §0 이 지시하는 '\'' 이스케이프가 적용된 형태로 검증한다.
+  local cmd
+  cmd='git commit -m "don'\''t fix -- a.ts"'
+  printf 'A2\n' > a.ts
+  git add a.ts
+
+  run run_gate "$cmd"
+  [[ "$output" == *"deny"* ]]
+  [[ "$output" == *"a.ts"* ]]
+
+  # 스킬이 SKILL.md 규칙대로 감싼 그대로 실행한다.
+  run bash -c "bash '$PLUGIN_ROOT/scripts/pending-set.sh' 'git commit -m \"don'\\''t fix -- a.ts\"'"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$(git hash-object a.ts)"* ]]
+
+  run bash -c "echo '$VALID' | bash '$PLUGIN_ROOT/scripts/record-pass.sh' 'git commit -m \"don'\\''t fix -- a.ts\"'"
+  [ "$status" -eq 0 ]
+
+  run run_gate "$cmd"
+  [ -z "$output" ]
+}
+
+@test "계약: SKILL.md 는 작은따옴표 이스케이프를 지시한다" {
+  local skill="$PLUGIN_ROOT/skills/kkochikkochi/SKILL.md"
+  grep -qF "'\\''" "$skill"
+}
+
+@test "계약: SKILL.md 에 중첩된 삼중 백틱 블록이 없다" {
+  # 삼중 백틱 안에 삼중 백틱을 넣으면 바깥 펜스가 먼저 닫혀 예시가
+  # 깨진 채로 렌더링된다. 펜스 개수는 짝수여야 한다.
+  local skill="$PLUGIN_ROOT/skills/kkochikkochi/SKILL.md"
+  local n
+  n="$(grep -c '^```' "$skill")"
+  [ $((n % 2)) -eq 0 ]
+}
+
+@test "deny 사유의 구분선은 커맨드 내용과 충돌하지 않는다" {
+  # 예전에는 삼중 백틱 펜스였다. 커맨드가 삼중 백틱을 담고 있으면
+  # (마크다운을 heredoc 으로 쓰고 && git commit 하는 흔한 형태) 펜스가
+  # 일찍 닫혀 스킬이 잘린 문자열을 받는다.
+  printf 'C1\n' > c.ts; git add c.ts
+  local cmd
+  cmd='printf "```
+KKOCHI_CMD
+" > d.md && git commit -m x'
+  run run_gate "$cmd"
+  [[ "$output" == *"deny"* ]]
+  # 커맨드가 기본 마커를 이미 담고 있으므로 훅은 다른 마커를 골라야 한다.
+  [[ "$output" == *"KKOCHI_CMD_1"* ]]
 }
 
 @test "계약: SKILL.md 는 커맨드를 하드코딩하지 않는다" {
@@ -250,7 +349,9 @@ Co-Authored-By: Someone <s@example.com>"'
     '{tool_name:"Bash", cwd:$cwd, tool_input:{command:$c}}')
   echo "$payload" | bash "$PLUGIN_ROOT/hooks/gate.sh" >/dev/null
   elapsed=$((SECONDS - start))
-  [ "$elapsed" -lt 8 ]
+  # 실측 1.5s. O(n^2) 로 되돌아가면 이 크기에서 ~16s 가 되므로 4s 면
+  # 넉넉히 잡히고, CI 러너가 느려도 2배 이상 여유가 있다.
+  [ "$elapsed" -lt 4 ]
 }
 
 @test "commit 이 없는 긴 커맨드는 토큰화 없이 즉시 통과한다" {
@@ -263,7 +364,26 @@ Co-Authored-By: Someone <s@example.com>"'
   run bash -c "echo '$payload' | bash '$PLUGIN_ROOT/hooks/gate.sh'"
   elapsed=$((SECONDS - start))
   [ -z "$output" ]
-  [ "$elapsed" -lt 3 ]
+  [ "$elapsed" -lt 2 ]   # 실측 0.03s — 사전 필터가 빠지면 즉시 잡힌다
+}
+
+@test "토크나이저: 조각 경계에 정확히 걸친 && 도 세그먼트를 나눈다" {
+  # 조각 크기는 1024. 경계에 걸친 &/| 를 하나만 넘기면 `...&&` 로 끝나는
+  # 조각에서 두 글자가 각각 평범한 글자로 처리되어 세그먼트 구분자가
+  # 사라진다. 오프셋을 하나 찍기보다 경계 주변을 훑어 전부 확인한다.
+  # (기존 1024 경계 테스트는 && 를 따옴표 안에 넣어 이 경로를 안 탔다.)
+  # shellcheck source=scripts/lib-tokenize.sh
+  . "$PLUGIN_ROOT/scripts/lib-tokenize.sh"
+  local n pad last
+  for n in 1014 1015 1016 1017 1018 1019 1020 1021 1022 1023 1024; do
+    pad="$(head -c "$n" /dev/zero | tr '\0' 'x')"
+    tokenize_cmd "echo $pad && git commit"
+    last=$(( ${#TOKENS[@]} - 1 ))
+    if [ "${TOKENS[$last]}" != "commit" ] || [ "${TOK_SEG[$last]}" != "1" ]; then
+      echo "pad=$n: 마지막 토큰 [${TOKENS[$last]}] seg=${TOK_SEG[$last]} (기대: commit seg=1)" >&2
+      return 1
+    fi
+  done
 }
 
 @test "토크나이저 조각 경계(1024)를 넘어도 결과가 같다" {
