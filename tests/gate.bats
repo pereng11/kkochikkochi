@@ -168,6 +168,11 @@ mark_covered() {  # $1 = 경로
   printf '%s\t%s\t%s\n' \
     "$(cd "$other" && git hash-object -- o.ts)" "o.ts" "p-test" \
     >> "$other_git_dir/quiz-gate/covered.tsv"
+  # 세션 레포에도 검증되지 않은 스테이징을 만들어 둔다. gate.sh 가 -C 를
+  # 무시하고 세션 레포를 판정해 버리면 여기서 deny 가 나와야 하므로,
+  # 이 파일이 없으면 -C 를 아예 무시해도 통과해 버리는 맹점이 생긴다.
+  printf 'C1\n' > c.ts
+  git add c.ts
   run run_gate "git -C '$other' commit -m 'x'"
   [ -z "$output" ]
   rm -rf "$other"
@@ -178,4 +183,26 @@ mark_covered() {  # $1 = 경로
   run run_gate "git -C '/no/such/dir/at/all' commit -m 'x'"
   [ "$status" -eq 0 ]
   [ -z "$output" ]
+}
+
+@test "-C 앞 옵션 값의 따옴표 안에 && 가 있어도 -C 를 놓치지 않는다" {
+  local other
+  other="$(mktemp -d)"
+  (
+    cd "$other" || exit 1
+    git init -q .
+    git config user.email "test@example.com"
+    git config user.name "test"
+    git config commit.gpgsign false
+    printf 'O1\n' > o.ts
+    git add o.ts
+  )
+  # 세션 레포는 깨끗하다. -c 옵션의 따옴표로 감싼 값 안에 && 가 들어
+  # 있다 — 예전 구현은 이걸 분류용(따옴표 지운) 문자열과 원본 문자열을
+  # 각각 따로 쪼개면서 세그먼트 개수가 어긋나, -C 값을 잃어버리고
+  # 세션 레포를 판정해(즉 조용히 통과해) 버렸다.
+  run run_gate "git -c alias.foo=\"a && b\" -C '$other' commit -m x"
+  [[ "$output" == *"deny"* ]]
+  [[ "$output" == *"o.ts"* ]]
+  rm -rf "$other"
 }
