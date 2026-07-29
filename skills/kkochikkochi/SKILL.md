@@ -9,15 +9,45 @@ description: Use when a commit is blocked by the KkochiKkochi gate, or when the 
 
 **핵심 원칙: 문항 품질이 이 도구의 성패다.** 코드를 읽지 않고 소거법으로 풀 수 있는 문항은 게이트를 무력화한다.
 
+## 0. 차단된 커맨드를 먼저 확보한다 — 가장 중요한 단계
+
+훅이 커밋을 막으면 deny 사유 끝에 **차단된 커맨드 원문**이 실려 온다:
+
+```
+차단된 커맨드 — 스킬은 이 문자열을 **그대로** pending-set.sh 와
+record-pass.sh 의 인자로 넘길 것:
+```
+git commit -am "x"
+```
+```
+
+이 문자열을 `<BLOCKED_COMMAND>` 로 삼는다. 아래 모든 스크립트 호출에서 이것을
+**한 글자도 바꾸지 않고** 그대로 인자로 넘긴다.
+
+**`"git commit"` 으로 대체하지 않는다.** 무엇이 커밋되는지는 커맨드에 달려 있다
+— `git commit -am x` 는 워크트리 수정본을 담고 `git commit -m x` 는 담지 않는다.
+훅은 실제 커맨드로 판정하는데 스킬이 `"git commit"` 을 가정하면 두 쪽이 서로
+다른 집합을 보게 되고, 그러면:
+
+1. 훅이 막는다 → 2. 스킬은 볼 것이 없다고 판단하고 멈춘다 →
+3. 기록해도 `record-pass.sh` 가 "커밋될 내용이 없습니다"로 거부한다 →
+4. 훅이 또 막는다. **영구 교착이다.** 사용자에게는 빠져나갈 길이 없다.
+
+`/kk` 처럼 가로챈 커맨드가 없는 수동 실행일 때만 `git commit` 을 기본값으로 쓴다.
+
 ## 1. 재료 수집
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/pending-set.sh" "git commit"
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pending-set.sh" '<BLOCKED_COMMAND>'
 ```
 
 출력이 비어 있으면 검증할 것이 없다. 사용자에게 알리고 종료한다.
 
-이어서 세 가지 재료를 모은다.
+단, **훅이 막았는데 여기가 비어 있다면 그것은 버그다.** 조용히 멈추지 말고
+사용자에게 "게이트가 막았지만 검증 대상을 계산할 수 없다"고 알리고, 넘긴
+커맨드 문자열을 함께 보여준다.
+
+이어서 아래 재료를 모은다.
 
 | 재료 | 얻는 법 | 어느 축에 쓰이나 |
 |---|---|---|
@@ -101,7 +131,12 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/pending-set.sh" "git commit"
 ### 예시 1 — 통과 기록 (여러 문항 형태를 함께 보여준다)
 
 ```bash
-cat <<'JSON' | bash "${CLAUDE_PLUGIN_ROOT}/scripts/record-pass.sh" "git commit"
+`<BLOCKED_COMMAND>` 는 §0 에서 확보한 그 문자열이다. `pending-set.sh` 에 넘긴
+것과 **반드시 같아야** 한다 — 다르면 기록한 집합과 훅이 검사하는 집합이 갈려
+커밋이 계속 막힌다.
+
+```bash
+cat <<'JSON' | bash "${CLAUDE_PLUGIN_ROOT}/scripts/record-pass.sh" '<BLOCKED_COMMAND>'
 {
   "questions": [
     {
@@ -145,7 +180,7 @@ JSON
 ### 예시 2 — 출제할 것이 없을 때 (스킵)
 
 ```bash
-cat <<'JSON' | bash "${CLAUDE_PLUGIN_ROOT}/scripts/record-pass.sh" "git commit"
+cat <<'JSON' | bash "${CLAUDE_PLUGIN_ROOT}/scripts/record-pass.sh" '<BLOCKED_COMMAND>'
 {
   "questions": [],
   "skipped_reason": "lockfile 재생성만 포함, 질문거리 없음"

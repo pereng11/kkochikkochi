@@ -11,6 +11,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PENDING_SET="$SCRIPT_DIR/pending-set.sh"
+LIB_TOKENIZE="$SCRIPT_DIR/lib-tokenize.sh"
 CMD="${1:-git commit}"
 
 die() { echo "kkochikkochi: $1" >&2; exit 1; }
@@ -40,10 +41,21 @@ if [ "$n_questions" -eq 0 ] && [ -z "$skipped" ]; then
 fi
 
 # 서술형 답변이 공백이면 거부한다.
-if jq -e '.questions[]? | select(.format == "free")
+if jq -e '.questions[] | select(.format == "free")
           | select((.answer // "") | gsub("\\s"; "") == "")' \
      >/dev/null <<<"$transcript"; then
   die "서술형 답변이 비어 있습니다"
+fi
+
+# `git -C <dir> commit` 은 실제로 다른 저장소를 향한다. gate.sh 는 그 저장소를
+# 기준으로 판정하므로, 여기서 -C 를 무시하면 세션 레포에 기록이 남고 대상
+# 레포의 커밋은 계속 막힌다. gate.sh 와 같은 파서로 대상을 뽑아 옮겨 간다.
+if [ -r "$LIB_TOKENIZE" ]; then
+  # shellcheck source=scripts/lib-tokenize.sh
+  . "$LIB_TOKENIZE"
+  if parse_git_commit "$CMD" && [ -n "$GIT_C_DIR" ]; then
+    cd "$GIT_C_DIR" 2>/dev/null || die "-C 가 가리키는 디렉터리로 이동할 수 없습니다: $GIT_C_DIR"
+  fi
 fi
 
 pending="$(bash "$PENDING_SET" "$CMD" 2>/dev/null)" || die "커밋 대상을 계산할 수 없습니다"
