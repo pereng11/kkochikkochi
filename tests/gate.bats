@@ -127,3 +127,55 @@ mark_covered() {  # $1 = 경로
   [ "$status" -eq 0 ]
   [ -z "$output" ]
 }
+
+@test "git -C 다른 레포를 향하면 그 레포 기준으로 판정한다" {
+  local other
+  other="$(mktemp -d)"
+  (
+    cd "$other" || exit 1
+    git init -q .
+    git config user.email "test@example.com"
+    git config user.name "test"
+    git config commit.gpgsign false
+    printf 'O1\n' > o.ts
+    git add o.ts
+  )
+  # 세션 레포(현재 $PWD)는 깨끗하다 — 스테이징된 게 없다.
+  run run_gate "git -C '$other' commit -m 'x'"
+  [[ "$output" == *"deny"* ]]
+  [[ "$output" == *"o.ts"* ]]
+  rm -rf "$other"
+}
+
+@test "git -C 다른 레포가 covered.tsv 에 있으면 통과한다" {
+  local other other_git_dir
+  other="$(mktemp -d)"
+  (
+    cd "$other" || exit 1
+    git init -q .
+    git config user.email "test@example.com"
+    git config user.name "test"
+    git config commit.gpgsign false
+    printf 'O1\n' > o.ts
+    git add o.ts
+  )
+  other_git_dir="$(cd "$other" && git rev-parse --git-dir)"
+  case "$other_git_dir" in
+    /*) : ;;
+    *) other_git_dir="$other/$other_git_dir" ;;
+  esac
+  mkdir -p "$other_git_dir/quiz-gate"
+  printf '%s\t%s\t%s\n' \
+    "$(cd "$other" && git hash-object -- o.ts)" "o.ts" "p-test" \
+    >> "$other_git_dir/quiz-gate/covered.tsv"
+  run run_gate "git -C '$other' commit -m 'x'"
+  [ -z "$output" ]
+  rm -rf "$other"
+}
+
+@test "git -C 존재하지 않는 경로는 통과한다(fail-open)" {
+  printf 'C1\n' > c.ts; git add c.ts
+  run run_gate "git -C '/no/such/dir/at/all' commit -m 'x'"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
