@@ -13,20 +13,17 @@ description: Use when a commit is blocked by the KkochiKkochi gate, or when the 
 
 ## 1. 재료 수집
 
-검증 대상 목록은 다음 순서로 얻는다.
+검증 대상 목록은 **반드시 이 스크립트로** 얻는다. 직접 `git diff --cached` 를 돌리거나 `pending` 파일을 직접 읽지 않는다.
 
 ```bash
-QDIR="$(git rev-parse --git-path quiz-gate)"
-if [ -s "$QDIR/pending" ]; then
-  cat "$QDIR/pending"          # 훅이 남긴 (blob SHA, 경로) 쌍 — 탭 구분
-else
-  git -c core.quotePath=false diff --cached --raw -z --abbrev=40 --no-renames
-fi
+bash "${CLAUDE_PLUGIN_ROOT:-$PLUGIN_ROOT}/scripts/pending.sh"
 ```
 
-**`pending` 을 먼저 보는 이유가 중요하다.** git 은 `git commit -a` 나 `git commit -- <path>` 에서 훅에게 **임시 인덱스**를 물려준다. 그래서 훅 안의 `git diff --cached` 는 정확하지만, 나중에 평범한 셸에서 도는 같은 명령은 진짜 인덱스를 봐서 **다른 답**을 낸다. `pending` 은 훅이 자기가 계산한 답을 그대로 적어 둔 파일이다 ([D40](../../docs/DECISIONS.md)). §5의 `record-pass.sh` 도 정확히 같은 순서로 같은 대상을 고른다 — 여기서 보는 대상과 기록될 대상이 다르면 앞뒤가 안 맞는 퀴즈가 나온다.
+**왜 직접 계산하면 안 되는가.** git 은 `git commit -a` 나 `git commit -- <path>` 에서 훅에게 **임시 인덱스**를 물려준다. 그래서 훅 안의 `git diff --cached` 는 정확하지만, 나중에 평범한 셸에서 도는 같은 명령은 진짜 인덱스를 봐서 **다른 답**을 낸다. 훅은 자기가 계산한 답을 `pending` 에 적어 두고, `pending.sh` 가 그것을 쓸지 폴백할지를 정한다 ([D40](../../docs/DECISIONS.md)).
 
-`pending` 의 각 줄은 `<blob SHA>\t<경로>` 다. 그 SHA 로 실제 내용을 볼 수 있다.
+그 판단 규칙(신선도 창 포함)은 `pending.sh` **한 곳에만** 있고, §5의 `record-pass.sh` 도 같은 스크립트를 부른다 ([D45](../../docs/DECISIONS.md)). 여기서 규칙을 다시 적으면 두 벌이 되고, 두 벌이 되면 반드시 한쪽이 낡는다 — 그러면 사용자가 A 를 풀었는데 B 가 검증된 것으로 기록된다. 실제로 그 버그가 났었다.
+
+출력의 각 줄은 `<blob SHA>\t<경로>` 다. 그 SHA 로 실제 내용을 볼 수 있다.
 
 ```bash
 git cat-file -p <sha>          # 커밋될 새 내용 (삭제면 SHA 가 0 40개다)
@@ -41,7 +38,7 @@ git show HEAD:<path>           # 변경 전 내용
 
 | 재료 | 얻는 법 | 어느 축에 쓰이나 |
 |---|---|---|
-| 변경 본문 | `git diff --cached` | 변경 사실, 영향·리스크 |
+| 변경 본문 | 위 SHA 로 `git diff HEAD:<경로> <sha>` 또는 `git cat-file -p <sha>` | 변경 사실, 영향·리스크 |
 | 호출부·의존 | 변경된 심볼을 레포에서 Grep | 영향·리스크 |
 | 이전 동작 이력 | `git log -p` / `git show HEAD:<path>` 등으로 변경 전 실제 코드를 확인 | 오답 선택지("이전 버전의 실제 동작") |
 | 설계 근거 | **현재 대화 맥락** | 설계 의도 |
@@ -117,8 +114,8 @@ git show HEAD:<path>           # 변경 전 내용
 ## 5. 기록
 
 전 문항 통과 후 `record-pass.sh` 를 호출한다. 이 스크립트는 인자를 받지 않는다 —
-대상(SHA·경로)은 §1과 똑같은 순서로 스스로 고른다(훅이 남긴 `pending` 이 있고
-신선하면 그것, 없으면 `git diff --cached`).
+대상(SHA·경로)은 §1에서 부른 것과 **같은 `pending.sh`** 를 내부에서 불러 고른다.
+그래서 문항을 낸 대상과 기록되는 대상이 어긋날 수 없다.
 
 Claude Code 에서는 `${CLAUDE_PLUGIN_ROOT}`, Codex 에서는 `${PLUGIN_ROOT}` 를 쓴다.
 아래 예시는 `${CLAUDE_PLUGIN_ROOT:-$PLUGIN_ROOT}` 로 두 환경 모두에서 그대로 복사해
