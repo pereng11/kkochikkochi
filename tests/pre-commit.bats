@@ -138,6 +138,10 @@ teardown() { teardown_repo; }
   # 값 자체에 이스케이프 처리가 걸려 역슬래시가 사라진다 (awk -v p='a\sb'
   # 는 'asb' 가 된다). ENVIRON 을 거치지 않으면 이 경로는 아무리 커버해도
   # 영원히 통과하지 못한다.
+  #
+  # 주의: \s 는 표준 이스케이프가 아니라서 mawk(우분투 기본 awk)는 애초에
+  # 안 건드린다 — 이 케이스 하나만으로는 CI의 기본 awk에서 회귀가 나도
+  # 안 걸린다. 모든 방언에서 걸리는 대조군은 바로 아래 \t 케이스다.
   printf 'W2\n' > 'back\slash.ts'
   git add 'back\slash.ts'
   stamp
@@ -145,6 +149,23 @@ teardown() { teardown_repo; }
   [ "$status" -ne 0 ]
   [[ "$output" == *'back\slash.ts'* ]]
   mark_covered 'back\slash.ts'
+  run commit_as_human -m x
+  [ "$status" -eq 0 ]
+}
+
+@test "역슬래시-t 경로는 모든 awk 방언에서 회귀를 잡는다" {
+  # \t 는 \s 와 달리 표준 이스케이프라서 gawk·BSD awk·mawk 전부 -v 값에서
+  # 진짜 탭으로 바꿔 버린다. 그러니 이 경로(문자 그대로 \ 다음에 t) 하나면
+  # ENVIRON 없이 -v 로 되돌리는 회귀를 CI의 기본 awk(mawk)에서도 잡는다.
+  # (파일명 안의 리터럴 '\t' 두 글자이지 실제 탭 바이트가 아니다 — 실제 탭이
+  # 든 경로는 covered.tsv 자체가 탭 구분이라 별개의, 범위 밖 한계다.)
+  printf 'W3\n' > 'tab\there.ts'
+  git add 'tab\there.ts'
+  stamp
+  run commit_as_human -m x
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'tab\there.ts'* ]]
+  mark_covered 'tab\there.ts'
   run commit_as_human -m x
   [ "$status" -eq 0 ]
 }
