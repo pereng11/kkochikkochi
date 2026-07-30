@@ -30,7 +30,10 @@ stamp_run() {  # $1 = agent, $2 = command
 }
 
 @test "stdout 에 아무것도 쓰지 않는다" {
-  run stamp_run claude-code
+  # 커밋으로 보이는 명령 + 훅 미설치 조합의 stdout(건강검진 deny)은
+  # tests/health-check.bats 가 다룬다. 여기서는 핸드셰이크 기록 경로
+  # 자체가 조용한지만 본다.
+  run stamp_run claude-code 'ls -la'
   [ -z "$output" ]
 }
 

@@ -5,8 +5,8 @@ load helper
 setup() { setup_repo; seed_repo; }
 teardown() { teardown_repo; }
 
-record() {  # $1 = transcript JSON, $2 = command
-  echo "$1" | bash "$PLUGIN_ROOT/scripts/record-pass.sh" "${2:-git commit -m x}"
+record() {  # $1 = transcript JSON
+  echo "$1" | bash "$PLUGIN_ROOT/scripts/record-pass.sh"
 }
 
 qdir() { echo "$(git rev-parse --git-dir)/quiz-gate"; }
@@ -129,6 +129,46 @@ VALID='{"questions":[{"axis":"facts","q":"무엇이 바뀌었나?","evidence":"c
   record "$VALID"
   payload=$(jq -n --arg c 'git commit -m x' --arg cwd "$PWD" \
     '{tool_name:"Bash", cwd:$cwd, tool_input:{command:$c}}')
-  run bash -c "echo '$payload' | bash '$PLUGIN_ROOT/hooks/gate.sh'"
+  run bash -c "echo '$payload' | bash '$PLUGIN_ROOT/hooks/pre-commit'"
   [ -z "$output" ]
+}
+
+# 아래 세 테스트는 Task 1~3 리뷰에서 넘어온 계약을 record-pass.sh 스스로가
+# 지키는지 확인한다 (mark_covered 같은 테스트 전용 헬퍼가 아니라 실제
+# record-pass.sh 출력으로). agent-session 핸드셰이크를 직접 남기고 진짜
+# `git commit` 을 설치된 훅으로 태워, record-pass.sh 가 쓴 철자가 훅이 읽는
+# 철자와 정확히 같은지까지 왕복으로 증명한다.
+
+@test "따옴표가 든 경로도 기록된 철자 그대로 게이트를 통과시킨다" {
+  install_hook
+  printf 'W1\n' > 'we"ird.ts'; git add 'we"ird.ts'
+  run record "$VALID"
+  [ "$status" -eq 0 ]
+  grep -Fq 'we"ird.ts' "$(qdir)/covered.tsv"
+  stamp
+  run commit_as_human -m x
+  [ "$status" -eq 0 ]
+}
+
+@test "역슬래시가 든 경로도 기록된 철자 그대로 게이트를 통과시킨다" {
+  install_hook
+  printf 'W2\n' > 'back\slash.ts'; git add 'back\slash.ts'
+  run record "$VALID"
+  [ "$status" -eq 0 ]
+  grep -Fq 'back\slash.ts' "$(qdir)/covered.tsv"
+  stamp
+  run commit_as_human -m x
+  [ "$status" -eq 0 ]
+}
+
+@test "삭제된 파일은 40개의 0 SHA 로 기록되고 게이트를 통과시킨다" {
+  install_hook
+  printf 'OLD2\n' > old2.ts; git add old2.ts; commit_as_human -qm add-old2
+  git rm -q old2.ts
+  run record "$VALID"
+  [ "$status" -eq 0 ]
+  grep -q "^${NULL_SHA}"$'\t'"old2.ts"$'\t' "$(qdir)/covered.tsv"
+  stamp
+  run commit_as_human -m x
+  [ "$status" -eq 0 ]
 }

@@ -1,18 +1,15 @@
 #!/usr/bin/env bash
 # 퀴즈 통과를 기록한다.
 #
-# 사용법: echo "<transcript json>" | record-pass.sh "<원본 커맨드 문자열>"
+# 사용법: echo "<transcript json>" | record-pass.sh
 # 종료:   0 = 기록됨 / 1 = 거부
 #
-# SHA 는 인자로 받지 않고 스크립트가 직접 계산한다.
-# 에이전트가 건네준 해시를 신뢰하지 않기 위해서다.
+# 대상(SHA·경로)은 인자로 받지 않고 `git diff --cached` 로 직접 계산한다.
+# 에이전트가 건네준 명령 문자열이나 해시를 신뢰하지 않기 위해서다. 이 값은
+# 커밋될 내용 그 자체이므로 파싱이 필요 없다 — hooks/pre-commit 과 같은
+# 원리다.
 
 set -uo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PENDING_SET="$SCRIPT_DIR/pending-set.sh"
-LIB_TOKENIZE="$SCRIPT_DIR/lib-tokenize.sh"
-CMD="${1:-git commit}"
 
 die() { echo "kkochikkochi: $1" >&2; exit 1; }
 
@@ -47,18 +44,16 @@ if jq -e '.questions[] | select(.format == "free")
   die "서술형 답변이 비어 있습니다"
 fi
 
-# `git -C <dir> commit` 은 실제로 다른 저장소를 향한다. gate.sh 는 그 저장소를
-# 기준으로 판정하므로, 여기서 -C 를 무시하면 세션 레포에 기록이 남고 대상
-# 레포의 커밋은 계속 막힌다. gate.sh 와 같은 파서로 대상을 뽑아 옮겨 간다.
-if [ -r "$LIB_TOKENIZE" ]; then
-  # shellcheck source=scripts/lib-tokenize.sh
-  . "$LIB_TOKENIZE"
-  if parse_git_commit "$CMD" && [ -n "$GIT_C_DIR" ]; then
-    cd "$GIT_C_DIR" 2>/dev/null || die "-C 가 가리키는 디렉터리로 이동할 수 없습니다: $GIT_C_DIR"
-  fi
-fi
-
-pending="$(bash "$PENDING_SET" "$CMD" 2>/dev/null)" || die "커밋 대상을 계산할 수 없습니다"
+# 커밋될 내용 = git diff --cached. hooks/pre-commit 과 정확히 같은 커맨드와
+# 같은 -z 파싱을 쓴다 — --name-only 나 -z 없는 형태는 큰따옴표·역슬래시·
+# 탭·개행을 담은 경로를 C-quote 해 버려 covered.tsv 의 철자가 게이트가
+# 읽는 철자와 달라진다. 그러면 그 경로는 어떤 퀴즈로도 통과시킬 수 없는
+# 채로 영영 막힌다. 삭제된 파일은 --raw 가 이미 40개의 0 SHA 를 내어주므로
+# git hash-object 로 다시 계산하지 않는다 — 그건 애초에 존재하지 않는
+# blob 의 해시라 계산할 수 없다.
+pending="$(git -c core.quotePath=false diff --cached --raw -z --abbrev=40 --no-renames \
+           | tr '\0' '\n' \
+           | awk 'NR % 2 { split($0, f, " "); sha = f[4]; next } { printf "%s\t%s\n", sha, $0 }')"
 [ -n "$pending" ] || die "커밋될 내용이 없습니다"
 
 git_dir="$(git rev-parse --git-dir 2>/dev/null)" || die "git 저장소가 아닙니다"
@@ -70,7 +65,7 @@ pass_id="p-$(date -u +%Y%m%d-%H%M%S)"
 # 문답 전문을 먼저 저장하고, 그것이 안전하게 자리잡은 뒤에만 covered.tsv 에
 # 커버리지를 기록한다. 순서를 반대로 하면(커버리지 라인을 먼저 쓰면)
 # 전문 저장이 실패했을 때 감사 기록 없는 "유령 커버리지"가 covered.tsv 에
-# 영원히 남아 gate.sh 를 조용히 무력화한다.
+# 영원히 남아 hooks/pre-commit 을 조용히 무력화한다.
 #
 # 같은 디렉터리에 임시 파일로 먼저 쓰고 mv 로 옮겨, 쓰다 만 JSON 이
 # passes/ 아래에 절대 보이지 않게 한다(mv 는 같은 파일시스템에서 원자적).
