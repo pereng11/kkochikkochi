@@ -58,17 +58,29 @@ MSG
   cp "$SRC" "$TMP_HOOK" || { rm -f "$TMP_HOOK"; die "훅을 준비할 수 없습니다"; }
   chmod +x "$TMP_HOOK" || { rm -f "$TMP_HOOK"; die "실행 권한을 줄 수 없습니다"; }
 
-  # 기존 훅이 우리 것이 아니면 체이닝으로 옮긴다 — 새 훅이 이미 완성된
-  # 뒤이므로, 여기부터 실패해도 무엇을 되돌려야 할지 알 수 있다.
+  # 기존 훅이 우리 것이 아니면 체이닝 이름도 함께 갖게 한다 — 새 훅이 이미
+  # 완성된 뒤이므로, 여기부터 실패해도 무엇을 되돌려야 할지 알 수 있다.
   # 이미 체이닝 파일이 있으면 덮어쓰지 않는다 — 사용자의 원래 훅을 잃게 된다.
+  linked_aside=0
   moved_aside=0
   if [ -f "$TARGET" ] && ! is_ours "$TARGET"; then
     if [ -f "$CHAINED" ]; then
       rm -f "$TMP_HOOK"
       die "체이닝 파일이 이미 있습니다: $CHAINED — 수동으로 정리하세요"
     fi
-    mv "$TARGET" "$CHAINED" || { rm -f "$TMP_HOOK"; die "기존 훅을 옮길 수 없습니다"; }
-    moved_aside=1
+    # 하드 링크를 먼저 시도한다: mv 와 달리 TARGET 이라는 이름이 사라지는
+    # 순간이 없다 — CHAINED 는 그냥 같은 inode 를 가리키는 두 번째 이름이
+    # 될 뿐이고, TARGET 은 그 inode 를 계속 가리킨다. 같은 디렉터리이므로
+    # 반드시 같은 파일시스템이라 ln 이 걸릴 이유가 없다 — 단, 하드 링크를
+    # 지원하지 않는 파일시스템(일부 네트워크·FAT 계열 마운트)이면 ln 이
+    # 실패하고, 그때는 예전 방식(이동)으로 물러난다. 그 경우 TARGET 이
+    # 잠깐 사라지는 창이 다시 생기지만, 설치를 아예 포기하는 것보다는 낫다.
+    if ln "$TARGET" "$CHAINED" 2>/dev/null; then
+      linked_aside=1
+    else
+      mv "$TARGET" "$CHAINED" || { rm -f "$TMP_HOOK"; die "기존 훅을 옮길 수 없습니다"; }
+      moved_aside=1
+    fi
     chmod +x "$CHAINED" 2>/dev/null ||
       echo "kkochikkochi: 경고 — $CHAINED 에 실행 권한을 줄 수 없습니다. 수동으로 chmod +x 하세요" >&2
     echo "kkochikkochi: 기존 pre-commit 훅을 $CHAINED 로 옮기고 체이닝합니다" >&2
@@ -76,10 +88,18 @@ MSG
 
   # 같은 디렉터리 안에서의 rename 은 원자적이다 — 이 한 걸음 이후 TARGET 은
   # 옛 파일이거나 새 파일이거나 둘 중 하나이지, 결코 "둘 다 없음"이 되지
-  # 않는다. 그래도 이 rename 자체가 실패하면(디스크가 꽉 찼다거나 권한이
-  # 바뀌는 등) 바로 위에서 옮겨 둔 기존 훅을 제자리로 되돌린다.
+  # 않는다. (linked_aside 경로에서는 이 rename 이전에도 TARGET 이 사라진
+  # 적이 없다 — CHAINED 는 애초에 그 inode 의 또 다른 이름일 뿐이었다.)
+  # 그래도 이 rename 자체가 실패하면(디스크가 꽉 찼다거나 권한이 바뀌는
+  # 등) 시도 이전 상태로 되돌린다.
   if ! mv "$TMP_HOOK" "$TARGET"; then
     rm -f "$TMP_HOOK"
+    if [ "$linked_aside" -eq 1 ]; then
+      # TARGET 은 하드 링크라서 애초에 없어진 적이 없다 — 복구할 것은
+      # 없고, 방금 만든 CHAINED 링크만 지워서 시도 이전 상태로 되돌린다.
+      rm -f "$CHAINED"
+      die "훅을 설치할 수 없습니다 (기존 훅은 그대로 있습니다)"
+    fi
     if [ "$moved_aside" -eq 1 ] && mv "$CHAINED" "$TARGET" 2>/dev/null; then
       die "훅을 설치할 수 없습니다 (기존 훅을 복구했습니다)"
     fi

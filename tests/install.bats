@@ -88,7 +88,11 @@ inst() { bash "$PLUGIN_ROOT/scripts/install.sh" "$@"; }
 
 @test "새 훅 준비(cp)가 실패해도 기존 훅이 사라지지 않는다" {
   printf '#!/bin/sh\necho ORIGINAL\nexit 0\n' > "$(hooksdir)/pre-commit"; chmod +x "$(hooksdir)/pre-commit"
-  fakebin="$BATS_TEST_TMPDIR/fakebin"
+  # BATS_TEST_TMPDIR 는 bats-core 1.5 이전엔 정의되지 않는다(Ubuntu 22.04
+  # apt 의 bats 1.2.1 로 실측 — 미정의 상태에서 "$BATS_TEST_TMPDIR/fakebin"
+  # 은 그냥 "/fakebin" 이 되어 테스트 사이에 상태가 새어 나간다). 그래서
+  # 버전에 기대지 않고 매번 mktemp -d 로 테스트마다 독립된 디렉터리를 만든다.
+  fakebin="$(mktemp -d)"
   mkdir -p "$fakebin"
   printf '#!/bin/sh\nexit 1\n' > "$fakebin/cp"
   chmod +x "$fakebin/cp"
@@ -104,7 +108,11 @@ inst() { bash "$PLUGIN_ROOT/scripts/install.sh" "$@"; }
 
 @test "설치 마지막 이동이 실패해도 기존 훅이 사라지지 않는다 (복구됨)" {
   printf '#!/bin/sh\necho ORIGINAL\nexit 0\n' > "$(hooksdir)/pre-commit"; chmod +x "$(hooksdir)/pre-commit"
-  fakebin="$BATS_TEST_TMPDIR/fakebin"
+  # BATS_TEST_TMPDIR 는 bats-core 1.5 이전엔 정의되지 않는다(Ubuntu 22.04
+  # apt 의 bats 1.2.1 로 실측 — 미정의 상태에서 "$BATS_TEST_TMPDIR/fakebin"
+  # 은 그냥 "/fakebin" 이 되어 테스트 사이에 상태가 새어 나간다). 그래서
+  # 버전에 기대지 않고 매번 mktemp -d 로 테스트마다 독립된 디렉터리를 만든다.
+  fakebin="$(mktemp -d)"
   mkdir -p "$fakebin"
   # 임시 파일을 최종 위치로 옮기는 그 마지막 mv 만 실패시킨다. 기존 훅을
   # 체이닝 위치로 옮기는 첫 번째 mv 는 그대로 통과시켜야, 실제로 다음 순서로
@@ -134,7 +142,11 @@ FAKEMV
   # 대조군: 체이닝이 실제로 걸려 있는지 먼저 확인한다.
   [ -f "$(hooksdir)/pre-commit.kkochikkochi-chained" ]
   grep -q 'KKOCHIKKOCHI-HOOK-v1' "$(hooksdir)/pre-commit"
-  fakebin="$BATS_TEST_TMPDIR/fakebin"
+  # BATS_TEST_TMPDIR 는 bats-core 1.5 이전엔 정의되지 않는다(Ubuntu 22.04
+  # apt 의 bats 1.2.1 로 실측 — 미정의 상태에서 "$BATS_TEST_TMPDIR/fakebin"
+  # 은 그냥 "/fakebin" 이 되어 테스트 사이에 상태가 새어 나간다). 그래서
+  # 버전에 기대지 않고 매번 mktemp -d 로 테스트마다 독립된 디렉터리를 만든다.
+  fakebin="$(mktemp -d)"
   mkdir -p "$fakebin"
   printf '#!/bin/sh\nexit 1\n' > "$fakebin/mv"
   chmod +x "$fakebin/mv"
@@ -145,4 +157,75 @@ FAKEMV
   # 여기서 pre-commit 자체가 사라진다).
   [ -f "$(hooksdir)/pre-commit" ]
   grep -q 'KKOCHIKKOCHI-HOOK-v1' "$(hooksdir)/pre-commit"
+}
+
+# ── 체이닝은 하드 링크로 한다 — TARGET 이 사라지는 순간 자체가 없다 ──
+# (이동 방식은 두 mv 사이에 TARGET 이 잠깐 존재하지 않는 창을 남긴다.
+# 진짜 SIGKILL 인터럽트는 bats 로 재현하기 어려우므로, 그 창에 해당하는
+# 관찰 가능한 시점 — 마지막 rename 이 시도되는 바로 그 순간 — 에서
+# TARGET 의 존재 여부를 기록해 확인한다.)
+
+@test "체이닝은 하드 링크를 써서 마지막 rename 시점에도 TARGET 이 이미 존재한다" {
+  printf '#!/bin/sh\necho ORIGINAL\nexit 0\n' > "$(hooksdir)/pre-commit"; chmod +x "$(hooksdir)/pre-commit"
+  # BATS_TEST_TMPDIR 는 bats-core 1.5 이전엔 정의되지 않는다(Ubuntu 22.04
+  # apt 의 bats 1.2.1 로 실측 — 미정의 상태에서 "$BATS_TEST_TMPDIR/fakebin"
+  # 은 그냥 "/fakebin" 이 되어 테스트 사이에 상태가 새어 나간다). 그래서
+  # 버전에 기대지 않고 매번 mktemp -d 로 테스트마다 독립된 디렉터리를 만든다.
+  fakebin="$(mktemp -d)"
+  mkdir -p "$fakebin"
+  observed="$(mktemp -d)/observed"
+  cat > "$fakebin/mv" <<FAKEMV
+#!/bin/sh
+case "\$1" in
+  *.kkochikkochi-tmp.*)
+    if [ -f "\$2" ]; then echo PRESENT > "$observed"; else echo ABSENT > "$observed"; fi
+    exit 1
+    ;;
+esac
+exec /bin/mv "\$@"
+FAKEMV
+  chmod +x "$fakebin/mv"
+  PATH="$fakebin:$PATH" run inst install
+  [ "$status" -ne 0 ]
+  [ -f "$observed" ]
+  # 예전(파괴적 이동) 방식이었다면 이 시점엔 TARGET 이 이미 옮겨져 없어야
+  # 정상이었다 — 하드 링크로 바꾼 뒤에는 이 시점에도 여전히 있어야 한다.
+  [ "$(cat "$observed")" = "PRESENT" ]
+}
+
+@test "설치 뒤 TARGET 과 CHAINED 는 같은 inode 를 공유하지 않는다 (링크가 분리됐다)" {
+  printf '#!/bin/sh\necho ORIGINAL\nexit 0\n' > "$(hooksdir)/pre-commit"; chmod +x "$(hooksdir)/pre-commit"
+  inst install
+  [ -f "$(hooksdir)/pre-commit.kkochikkochi-chained" ]
+  # 마지막 rename 이 TARGET 이라는 "이름"만 새 inode 로 바꿔치웠으므로,
+  # CHAINED 는 계속 원본 inode 를 가리켜야 한다 — 둘이 같은 파일이면 안 된다.
+  ! [ "$(hooksdir)/pre-commit" -ef "$(hooksdir)/pre-commit.kkochikkochi-chained" ]
+  run cat "$(hooksdir)/pre-commit.kkochikkochi-chained"
+  [[ "$output" == *"ORIGINAL"* ]]
+  grep -q 'KKOCHIKKOCHI-HOOK-v1' "$(hooksdir)/pre-commit"
+  ! grep -q 'KKOCHIKKOCHI-HOOK-v1' "$(hooksdir)/pre-commit.kkochikkochi-chained"
+}
+
+@test "ln 이 실패하면 예전 방식(이동)으로 물러나 설치를 계속한다" {
+  printf '#!/bin/sh\necho ORIGINAL\nexit 0\n' > "$(hooksdir)/pre-commit"; chmod +x "$(hooksdir)/pre-commit"
+  # BATS_TEST_TMPDIR 는 bats-core 1.5 이전엔 정의되지 않는다(Ubuntu 22.04
+  # apt 의 bats 1.2.1 로 실측 — 미정의 상태에서 "$BATS_TEST_TMPDIR/fakebin"
+  # 은 그냥 "/fakebin" 이 되어 테스트 사이에 상태가 새어 나간다). 그래서
+  # 버전에 기대지 않고 매번 mktemp -d 로 테스트마다 독립된 디렉터리를 만든다.
+  fakebin="$(mktemp -d)"
+  mkdir -p "$fakebin"
+  printf '#!/bin/sh\nexit 1\n' > "$fakebin/ln"
+  chmod +x "$fakebin/ln"
+  PATH="$fakebin:$PATH" run inst install
+  [ "$status" -eq 0 ]
+  grep -q 'KKOCHIKKOCHI-HOOK-v1' "$(hooksdir)/pre-commit"
+  run cat "$(hooksdir)/pre-commit.kkochikkochi-chained"
+  [[ "$output" == *"ORIGINAL"* ]]
+  # 폴백 경로로 설치된 뒤에도 uninstall 왕복이 정상 동작해야 한다 —
+  # 체이닝 방식이 달라졌다고 복구 로직까지 달라지면 안 된다.
+  run inst uninstall
+  [ "$status" -eq 0 ]
+  run cat "$(hooksdir)/pre-commit"
+  [[ "$output" == *"ORIGINAL"* ]]
+  [ ! -f "$(hooksdir)/pre-commit.kkochikkochi-chained" ]
 }
