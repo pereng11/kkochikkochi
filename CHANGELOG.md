@@ -21,6 +21,7 @@
 ### Changed
 - `README.md` — 경로에 탭이 든 경우를 "복구 불가능"이라고 적었던 것을 바로잡았다(`--no-verify` 와 `uninstall` 로 회복된다). 건강검진이 매 Bash 호출마다 도는 것처럼 읽히던 설명과, 설치가 훅에 의해 자동 실행되고 커밋이 이어지는 것처럼 읽히던 설명도 실제 동작에 맞췄다
 - `tests/helper.bash` 의 `mark_covered()` 를 `stub_covered_line()` 으로 바꿨다. 이름이 진짜 writer 처럼 읽혀 `git commit -am` 교착을 가리고 있었다 — 왕복 주장에는 진짜 `record-pass.sh` 만 쓴다
+- **Claude Code 에서 문항이 터미널 폭에 잘려 읽히지 않던 문제.** `AskUserQuestion` 의 `question`·`label` 이 잘려 사용자가 문제를 읽지 못한 채 막히는 것을 실측했다. 이제 한 번에 1문항만 내고, 문항 전문과 근거 코드는 모든 선택지의 `preview` 에 반복해 싣는다(`skills/kkochikkochi/ask/claude-code.md`)
 
 ### Added
 - `tests/manifests.bats` — 두 훅 매니페스트의 `command` 문자열을 **실제로 실행해** 핸드셰이크가 남는지 확인한다. 변수 이름이 틀리면 JSON 은 멀쩡한데 모든 에이전트 커밋이 "사람"으로 분류되는데, 그 실패에 행동 커버리지가 전혀 없었다
