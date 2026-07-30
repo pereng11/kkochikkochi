@@ -106,11 +106,13 @@ git -c core.quotePath=false diff --cached --raw -z --abbrev=40 --no-renames
 대상(SHA·경로)은 §1과 똑같이 `git diff --cached` 로 스스로 계산한다.
 
 Claude Code 에서는 `${CLAUDE_PLUGIN_ROOT}`, Codex 에서는 `${PLUGIN_ROOT}` 를 쓴다.
+아래 예시는 `${CLAUDE_PLUGIN_ROOT:-$PLUGIN_ROOT}` 로 두 환경 모두에서 그대로 복사해
+실행할 수 있게 했다.
 
 ### 예시 1 — 통과 기록 (여러 문항 형태를 함께 보여준다)
 
 ```bash
-cat <<'JSON' | bash "${CLAUDE_PLUGIN_ROOT}/scripts/record-pass.sh"
+cat <<'JSON' | bash "${CLAUDE_PLUGIN_ROOT:-$PLUGIN_ROOT}/scripts/record-pass.sh"
 {
   "questions": [
     {
@@ -154,7 +156,7 @@ JSON
 ### 예시 2 — 출제할 것이 없을 때 (스킵)
 
 ```bash
-cat <<'JSON' | bash "${CLAUDE_PLUGIN_ROOT}/scripts/record-pass.sh"
+cat <<'JSON' | bash "${CLAUDE_PLUGIN_ROOT:-$PLUGIN_ROOT}/scripts/record-pass.sh"
 {
   "questions": [],
   "skipped_reason": "lockfile 재생성만 포함, 질문거리 없음"
