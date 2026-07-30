@@ -70,14 +70,14 @@ Claude Code 에서는 객관식이 `AskUserQuestion` 으로 클릭 선택된다.
 ### Claude Code
 
 ```
-/plugin marketplace add <owner>/kkochikkochi
+/plugin marketplace add pereng11/kkochikkochi
 /plugin install kkochikkochi
 ```
 
 ### Codex
 
 ```
-codex plugin marketplace add <owner>/kkochikkochi
+codex plugin marketplace add pereng11/kkochikkochi
 codex plugin add kkochikkochi@kkochikkochi
 ```
 
