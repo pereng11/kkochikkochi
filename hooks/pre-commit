@@ -1,0 +1,76 @@
+#!/bin/sh
+# KkochiKkochi 게이트 — git 이 직접 호출한다.
+# KKOCHIKKOCHI-HOOK-v1  ← 자기 식별 마커. 설치기가 이 문자열로 "내 훅"을 판별한다.
+#
+# 여기서 git diff --cached 는 커밋될 내용 그 자체다. 명령 문자열을 파싱하지 않는다.
+
+set -u
+
+QDIR="$(git rev-parse --git-path quiz-gate)"
+CHAINED="$(git rev-parse --git-path hooks)/pre-commit.kkochikkochi-chained"
+FRESH_SECS=120
+
+# ── 1. 체이닝된 기존 훅을 먼저 실행한다 ────────────────────────────
+# 린트가 거부하는 코드에 이해도 퀴즈를 내는 것은 순서가 틀렸다. (D38)
+if [ -x "$CHAINED" ]; then
+  "$CHAINED" "$@" || exit $?
+fi
+
+# ── 2. 에이전트가 만든 커밋인가 (D33) ─────────────────────────────
+agent_signal=""
+
+# 1차: 핸드셰이크. 변수 이름에 의존하지 않아 버전 변경에 강하다. (D34)
+marker="$QDIR/agent-session"
+if [ -f "$marker" ]; then
+  now=$(date +%s)
+  mtime=$(stat -f %m "$marker" 2>/dev/null || stat -c %Y "$marker" 2>/dev/null || echo 0)
+  if [ "$((now - mtime))" -le "$FRESH_SECS" ]; then
+    agent_signal="handshake:$(head -1 "$marker" 2>/dev/null)"
+  fi
+fi
+
+# 2차: 직접 관찰한 환경변수만. 추측으로 채우지 않는다. (D34)
+if [ -z "$agent_signal" ]; then
+  if [ -n "${CLAUDECODE:-}" ] || [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
+    agent_signal="env:claude-code"
+  fi
+fi
+
+# 3차: 음성 신호. TTY 가 있으면 사람이 터미널에 있다.
+if [ -z "$agent_signal" ] && [ -t 0 ]; then
+  exit 0
+fi
+
+# 애매하면 통과 (D35)
+[ -n "$agent_signal" ] || exit 0
+
+# ── 3. 커밋될 내용 = git diff --cached ────────────────────────────
+pending="$(git -c core.quotePath=false diff --cached --raw --abbrev=40 --no-renames \
+           | awk -F'\t' '{ split($1, f, " "); print f[4] "\t" $2 }')"
+[ -n "$pending" ] || exit 0
+
+covered="$QDIR/covered.tsv"
+missing=""
+while IFS="$(printf '\t')" read -r sha path; do
+  [ -n "$sha" ] || continue
+  if [ -r "$covered" ] && awk -F'\t' -v s="$sha" -v p="$path" \
+       '$1 == s && $2 == p { found = 1; exit } END { exit !found }' "$covered"; then
+    continue
+  fi
+  missing="$missing   $path
+"
+done <<PENDING
+$pending
+PENDING
+
+[ -n "$missing" ] || exit 0
+
+cat >&2 <<MSG
+🦡 KkochiKkochi — 이 커밋에 아직 검증되지 않은 변경이 있습니다.
+
+$missing
+이 변경을 이해했는지 먼저 확인해야 합니다.
+kkochikkochi 스킬을 실행해 퀴즈를 통과한 뒤 다시 커밋하세요.
+(판별 신호: $agent_signal)
+MSG
+exit 1

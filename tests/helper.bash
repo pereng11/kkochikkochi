@@ -52,3 +52,25 @@ staged_set() {
   git -c core.quotePath=false diff --cached --raw --abbrev=40 --no-renames |
     awk -F'\t' '{ split($1, f, " "); print f[4] "\t" $2 }'
 }
+
+qdir() { git rev-parse --git-path quiz-gate; }
+hooksdir() { git rev-parse --git-path hooks; }
+
+install_hook() {
+  mkdir -p "$(hooksdir)"
+  cp "$PLUGIN_ROOT/hooks/pre-commit" "$(hooksdir)/pre-commit"
+  chmod +x "$(hooksdir)/pre-commit"
+}
+
+stamp() {  # 핸드셰이크 마커를 신선하게 남긴다
+  mkdir -p "$(qdir)"
+  echo "${1:-test-agent}/sess-1" > "$(qdir)/agent-session"
+}
+
+mark_covered() {  # $1 = 경로
+  mkdir -p "$(qdir)"
+  printf '%s\t%s\t%s\n' "$(git hash-object -- "$1")" "$1" "p-test" >> "$(qdir)/covered.tsv"
+}
+
+# 에이전트 환경변수를 지운 상태로 커밋한다 (사람 커밋 근사)
+commit_as_human() { env -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID git commit "$@"; }
