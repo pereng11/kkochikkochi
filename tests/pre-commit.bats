@@ -133,6 +133,22 @@ teardown() { teardown_repo; }
   [ "$status" -eq 0 ]
 }
 
+@test "역슬래시가 든 경로도 실제 내용으로 판정한다" {
+  # -z 로 따옴표 문제는 풀었지만, covered.tsv 대조에 awk -v 를 쓰면 그
+  # 값 자체에 이스케이프 처리가 걸려 역슬래시가 사라진다 (awk -v p='a\sb'
+  # 는 'asb' 가 된다). ENVIRON 을 거치지 않으면 이 경로는 아무리 커버해도
+  # 영원히 통과하지 못한다.
+  printf 'W2\n' > 'back\slash.ts'
+  git add 'back\slash.ts'
+  stamp
+  run commit_as_human -m x
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'back\slash.ts'* ]]
+  mark_covered 'back\slash.ts'
+  run commit_as_human -m x
+  [ "$status" -eq 0 ]
+}
+
 @test "merge 커밋에서는 훅이 실행되지 않아 통과한다" {
   # 주의: git 은 클린 --no-ff 병합에 pre-commit 훅을 아예 부르지 않는다
   # (pre-merge-commit 을 대신 부른다). 그래서 이 테스트는 "돌연변이 훅도
@@ -213,9 +229,17 @@ teardown() { teardown_repo; }
 @test "mtime 계산이 숫자가 아닌 값을 내도 훅이 죽지 않는다" {
   # GNU coreutils 에서는 stat -f 가 --file-system 으로 해석되어 종료코드
   # 0으로 사람이 읽는 텍스트를 낸다 (실측: Ubuntu 22.04, coreutils 8.32).
-  # 그 출력을 산술식에 그대로 넣으면 dash 는 "Illegal number" 로 죽는다.
-  # 여기서는 실제 GNU 환경 없이도 그 실패 모드를 흉내내, 숫자가-아니면-0
-  # 가드가 실제로 방어하는지 확인한다.
+  # 그 출력을 산술식에 그대로 넣으면 dash 는 "Illegal number" 로 죽는다
+  # (macOS 의 /bin/sh 는 bash 라 "unbound variable" 로, 메시지도 다르다 —
+  # 그래서 메시지 문자열이 아니라 종료코드로 판정한다). 여기서는 실제 GNU
+  # 환경 없이도 그 실패 모드를 흉내내, 숫자가-아니면-0 가드가 실제로
+  # 방어하는지 확인한다.
+  #
+  # 가드가 없으면 두 플랫폼 다 셸 산술식에서 죽고, git 은 그 어떤 훅의
+  # 0이-아닌-종료코드도 자기 코드(1)로 보고한다 — 그래서 "죽지 않는다"의
+  # 증거는 메시지 문자열이 아니라 "커밋이 정상적으로 통과했다"(status 0)
+  # 이다. 이 커밋엔 다른 에이전트 신호가 전혀 없으니(마커가 못 읽혔다고
+  # 보고 낡은 걸로 처리) 가드가 제대로 동작하면 애매함으로 통과해야 한다.
   fakebin="$BATS_TEST_TMPDIR/fakebin"
   mkdir -p "$fakebin"
   printf '#!/bin/sh\necho "  File: fake filesystem info"\nexit 0\n' > "$fakebin/stat"
@@ -223,6 +247,7 @@ teardown() { teardown_repo; }
   printf 'C1\n' > c.ts; git add c.ts
   stamp
   PATH="$fakebin:$PATH" run commit_as_human -m x
-  [ "$status" -ne 2 ]
+  [ "$status" -eq 0 ]
   [[ "$output" != *"Illegal number"* ]]
+  [[ "$output" != *"unbound variable"* ]]
 }

@@ -84,8 +84,11 @@ while IFS= read -r line; do
   fi
   path="$line"
   [ -n "$sha" ] || continue
-  if [ -r "$covered" ] && awk -F'\t' -v s="$sha" -v p="$path" \
-       '$1 == s && $2 == p { found = 1; exit } END { exit !found }' "$covered"; then
+  # -v 는 값에 이스케이프 처리를 한다 (예: back\slash.ts 의 \s 가 사라진다).
+  # sha 는 16진수라 안전하지만 path 는 반드시 ENVIRON 으로 넘겨 원문 그대로
+  # 비교해야 한다.
+  if [ -r "$covered" ] && KK_PATH="$path" awk -F'\t' -v s="$sha" \
+       '$1 == s && $2 == ENVIRON["KK_PATH"] { found = 1; exit } END { exit !found }' "$covered"; then
     continue
   fi
   missing="$missing   $path
