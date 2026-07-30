@@ -62,6 +62,61 @@ stamp_run() {  # $1 = agent, $2 = command
   [ "$second" -ge "$first" ]
 }
 
+# ── D44: 커밋처럼 보이는 명령에서만 마커를 남긴다 ──
+
+@test "커밋이 아닌 명령에서는 마커를 남기지 않는다" {
+  # 매 Bash 호출마다 남기면 에이전트가 이 저장소에서 무엇이든 하고 있는 동안
+  # 마커가 늘 신선해서, 그 창에 들어온 모든 커밋이 출처와 무관하게 에이전트
+  # 커밋으로 보인다. IDE 커밋이 실제로 그렇게 막혔다.
+  for c in 'ls -la' 'npm test' 'git status' 'git log --oneline' 'cat README.md'; do
+    rm -f "$(qdir)/agent-session"
+    stamp_run claude-code "$c"
+    [ ! -f "$(qdir)/agent-session" ] || { echo "[$c] 가 마커를 남겼다"; return 1; }
+  done
+}
+
+@test "커밋처럼 보이는 명령에서는 마커를 남긴다" {
+  for c in 'git commit -m x' 'npm test && git commit -am x' 'git commit'; do
+    rm -f "$(qdir)/agent-session"
+    stamp_run claude-code "$c"
+    [ -f "$(qdir)/agent-session" ] || { echo "[$c] 가 마커를 남기지 않았다"; return 1; }
+  done
+}
+
+# ── D44 종단: 누가 커밋했는지로 갈린다 ──
+
+@test "에이전트가 다른 일을 하는 동안 IDE 커밋은 통과한다" {
+  # IDE·GUI git 클라이언트는 git 을 pty 가 아니라 파이프로 띄우므로 TTY
+  # 구제(D41)가 닿지 않는다. 유일한 방어선은 "마커가 없다"는 것뿐이다.
+  install_hook
+  printf 'C1\n' > c.ts; git add c.ts
+  stamp_run claude-code 'npm test'          # 에이전트는 커밋이 아닌 일을 하는 중
+  run commit_as_human -m x                  # IDE 커밋: 파이프, tty 없음, 에이전트 변수 없음
+  [ "$status" -eq 0 ]
+}
+
+@test "에이전트가 커밋하려 하면 여전히 막힌다 (대조군)" {
+  # 위 테스트가 "게이트를 통째로 꺼서" 통과한 것이 아님을 못 박는다.
+  install_hook
+  printf 'C1\n' > c.ts; git add c.ts
+  stamp_run claude-code 'git commit -m x'   # 에이전트가 커밋 직전
+  run commit_as_human -m x
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"c.ts"* ]]
+}
+
+@test "에이전트가 커밋 직전이어도 진짜 터미널 커밋은 통과한다 (TTY 층 유지)" {
+  # 에이전트가 찍고 거부당한 직후 사람이 손으로 커밋하는 경우를 구제한다.
+  install_hook
+  printf 'C1\n' > c.ts; git add c.ts
+  stamp_run claude-code 'git commit -m x'
+  with_tty env -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID git commit -m x || {
+    echo "pty 를 할당하지 못했다 — 이 테스트는 pty 없이는 아무것도 증명하지 못한다" >&2
+    return 1
+  }
+  [ "$TTY_RC" -eq 0 ]
+}
+
 @test "git 저장소가 아니면 조용히 종료한다" {
   cd "$(mktemp -d)" || return 1
   run stamp_run claude-code

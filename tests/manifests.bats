@@ -17,9 +17,10 @@ load helper
 setup() { setup_repo; seed_repo; }
 teardown() { teardown_repo; }
 
+# 커밋처럼 보이는 명령을 쓴다 — 핸드셰이크는 이제 그 경우에만 남는다 (D44).
 payload() {
   jq -n --arg cwd "$PWD" \
-    '{tool_name:"Bash", cwd:$cwd, session_id:"sess-manifest", tool_input:{command:"ls -la"}}'
+    '{tool_name:"Bash", cwd:$cwd, session_id:"sess-manifest", tool_input:{command:"git commit -m x"}}'
 }
 
 hook_command() {  # $1 = 매니페스트 경로

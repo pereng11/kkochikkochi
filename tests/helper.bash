@@ -104,8 +104,12 @@ with_tty() {
     printf 'echo $? > %q\n' "$rc_file"
   } > "$script_file"
 
-  # shellcheck disable=SC2034  # 재시도 횟수만 세는 루프 변수다
-  for attempt in 1 2 3; do
+  # 재시도를 넉넉히 준다. 부하가 높을 때(예: 돌연변이 감사가 전체 스위트를
+  # 연달아 돌릴 때) pty 할당이 실패하는 것을 실측했다 — 그때 한두 번 만에
+  # 포기하면 제품 결함이 아닌데 붉게 뜨고, 그것이 바로 이 헬퍼를 다시 쓰게
+  # 만든 원래 문제다. 시도 사이에 잠깐 쉬어 커널이 pty 를 회수할 틈을 준다.
+  for attempt in 1 2 3 4 5 6; do
+    [ "$attempt" -gt 1 ] && sleep 0.3
     : > "$probe_file"; : > "$rc_file"
     if [ "$(uname)" = "Darwin" ]; then
       script -q /dev/null /bin/bash "$script_file" >/dev/null 2>&1
