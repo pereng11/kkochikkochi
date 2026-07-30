@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats and shellcheck
+        run: sudo apt-get update && sudo apt-get install -y bats shellcheck
+
+      - name: Configure git identity
+        run: |
+          git config --global user.email "ci@example.com"
+          git config --global user.name "ci"
+          git config --global init.defaultBranch main
+
+      - name: Run tests
+        run: bats tests/
+
+      - name: Lint shell scripts
+        run: |
+          # shellcheck 가 러너 이미지에 우연히 들어 있는 것에 기대지 않는다.
+          # 없어졌는데 lint 가 조용히 건너뛰어지면 그게 더 나쁘다.
+          shellcheck --version
+          # hooks/pre-commit 은 확장자가 없고 POSIX sh 이므로 따로, 명시적으로 린트한다.
+          # (hooks/*.sh 는 이제 아무것도 매치하지 않는다 — 매치 실패 시 그 자체를
+          # 리터럴 인자로 넘겨 shellcheck 가 에러로 죽는 게 조용히 건너뛰는 것보다 낫다.)
+          shellcheck -s sh hooks/pre-commit
+          shellcheck scripts/*.sh tests/helper.bash
+
+      - name: Validate JSON
+        run: |
+          jq . hooks/hooks.json > /dev/null
+          jq . hooks.json > /dev/null
+          jq . .claude-plugin/plugin.json > /dev/null
+          # 첫 설치가 유일하게 의존하는 파일이다. 빠뜨리면 안 된다.
+          jq . .claude-plugin/marketplace.json > /dev/null
+          jq . .codex-plugin/plugin.json > /dev/null
+          jq . .agents/plugins/marketplace.json > /dev/null
+          # 문법 검사만으로는 부족하다 — 두 hooks.json 은 의도적으로 서로 다른
+          # 변수를 쓰므로(${CLAUDE_PLUGIN_ROOT} vs ${PLUGIN_ROOT}) 이름이
+          # 틀리면 JSON 은 멀쩡한데 stamp-agent.sh 가 아예 실행되지 않는다.
+          # command 문자열을 실제로 실행해 보는 것은 tests/manifests.bats 다.

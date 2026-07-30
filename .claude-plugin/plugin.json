@@ -1,0 +1,12 @@
+{
+  "name": "kkochikkochi",
+  "version": "0.2.0",
+  "description": "A comprehension gate for AI-assisted coding. Blocks the commit until you can explain what changed.",
+  "author": {
+    "name": "KkochiKkochi contributors"
+  },
+  "homepage": "https://github.com/pereng11/kkochikkochi",
+  "repository": "https://github.com/pereng11/kkochikkochi",
+  "license": "MIT",
+  "keywords": ["gate", "comprehension", "quiz", "review", "git", "commit"]
+}

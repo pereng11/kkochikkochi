@@ -1,0 +1,17 @@
+{
+  "description": "KkochiKkochi — records an agent handshake so the git pre-commit gate knows this commit came from an agent.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${PLUGIN_ROOT}/scripts/stamp-agent.sh\" --agent codex",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
