@@ -76,3 +76,73 @@ inst() { bash "$PLUGIN_ROOT/scripts/install.sh" "$@"; }
   run commit_as_human -m x
   [ "$status" -ne 0 ]
 }
+
+@test "core.hooksPath 가 설정돼 있으면 status 도 exit 2" {
+  mkdir -p .myhooks
+  git config core.hooksPath .myhooks
+  run inst status
+  [ "$status" -eq 2 ]
+}
+
+# ── 실패 시 훅이 사라지지 않는다 (cp/mv 를 가짜로 바꿔 중간 실패를 흉내낸다) ──
+
+@test "새 훅 준비(cp)가 실패해도 기존 훅이 사라지지 않는다" {
+  printf '#!/bin/sh\necho ORIGINAL\nexit 0\n' > "$(hooksdir)/pre-commit"; chmod +x "$(hooksdir)/pre-commit"
+  fakebin="$BATS_TEST_TMPDIR/fakebin"
+  mkdir -p "$fakebin"
+  printf '#!/bin/sh\nexit 1\n' > "$fakebin/cp"
+  chmod +x "$fakebin/cp"
+  PATH="$fakebin:$PATH" run inst install
+  [ "$status" -ne 0 ]
+  # 체이닝 이동은 cp 성공 이후에만 일어나므로, cp 가 실패하면 기존 훅은
+  # 옮겨지지도 않고 그 자리에 그대로 있어야 한다 — 체이닝 파일도 없어야 한다.
+  [ -f "$(hooksdir)/pre-commit" ]
+  [ ! -f "$(hooksdir)/pre-commit.kkochikkochi-chained" ]
+  run cat "$(hooksdir)/pre-commit"
+  [[ "$output" == *"ORIGINAL"* ]]
+}
+
+@test "설치 마지막 이동이 실패해도 기존 훅이 사라지지 않는다 (복구됨)" {
+  printf '#!/bin/sh\necho ORIGINAL\nexit 0\n' > "$(hooksdir)/pre-commit"; chmod +x "$(hooksdir)/pre-commit"
+  fakebin="$BATS_TEST_TMPDIR/fakebin"
+  mkdir -p "$fakebin"
+  # 임시 파일을 최종 위치로 옮기는 그 마지막 mv 만 실패시킨다. 기존 훅을
+  # 체이닝 위치로 옮기는 첫 번째 mv 는 그대로 통과시켜야, 실제로 다음 순서로
+  # 실패하는 시나리오(기존 훅은 이미 치워졌는데 새 훅을 놓다가 죽는 상황)를
+  # 재현할 수 있다.
+  cat > "$fakebin/mv" <<'FAKEMV'
+#!/bin/sh
+case "$1" in
+  *.kkochikkochi-tmp.*) exit 1 ;;
+esac
+exec /bin/mv "$@"
+FAKEMV
+  chmod +x "$fakebin/mv"
+  PATH="$fakebin:$PATH" run inst install
+  [ "$status" -ne 0 ]
+  # TARGET 이 완전히 사라진 채로 끝나면 안 된다 — 기존 훅이 복구돼 있어야
+  # 하고, 체이닝 파일은 다시 남아 있지 않아야 한다.
+  [ -f "$(hooksdir)/pre-commit" ]
+  [ ! -f "$(hooksdir)/pre-commit.kkochikkochi-chained" ]
+  run cat "$(hooksdir)/pre-commit"
+  [[ "$output" == *"ORIGINAL"* ]]
+}
+
+@test "uninstall 의 복구 이동이 실패해도 우리 훅이 남아있다" {
+  printf '#!/bin/sh\necho ORIGINAL\nexit 0\n' > "$(hooksdir)/pre-commit"; chmod +x "$(hooksdir)/pre-commit"
+  inst install
+  # 대조군: 체이닝이 실제로 걸려 있는지 먼저 확인한다.
+  [ -f "$(hooksdir)/pre-commit.kkochikkochi-chained" ]
+  grep -q 'KKOCHIKKOCHI-HOOK-v1' "$(hooksdir)/pre-commit"
+  fakebin="$BATS_TEST_TMPDIR/fakebin"
+  mkdir -p "$fakebin"
+  printf '#!/bin/sh\nexit 1\n' > "$fakebin/mv"
+  chmod +x "$fakebin/mv"
+  PATH="$fakebin:$PATH" run inst uninstall
+  [ "$status" -ne 0 ]
+  # 복구가 실패해도 저장소가 훅이 하나도 없는 상태로 떨어지면 안 된다 —
+  # 우리 훅이 그대로 남아 있어야 한다(먼저 지우고 나중에 복구하는 순서였다면
+  # 여기서 pre-commit 자체가 사라진다).
+  [ -f "$(hooksdir)/pre-commit" ]
+  grep -q 'KKOCHIKKOCHI-HOOK-v1' "$(hooksdir)/pre-commit"
+}
