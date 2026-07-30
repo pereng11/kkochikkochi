@@ -220,6 +220,20 @@ teardown() { teardown_repo; }
   [[ "$output" == *"c.ts"* ]]
 }
 
+@test "체이닝 파일이 우리 자신의 훅 사본이면 재귀를 막기 위해 실행하지 않는다" {
+  # 대조군은 바로 위 "먼저 실행되고 거부하면" 테스트다 — 마커만 없으면
+  # 똑같은 exit 7 스크립트가 실제로 실행되어 status 7·CHAINED_RAN 을 낸다.
+  # 여기서는 마커를 넣어서 그 실행이 억제되는지만 가른다.
+  printf '#!/bin/sh\necho CHAINED_RAN >&2\n# KKOCHIKKOCHI-HOOK-v1\nexit 7\n' \
+    > "$(hooksdir)/pre-commit.kkochikkochi-chained"
+  chmod +x "$(hooksdir)/pre-commit.kkochikkochi-chained"
+  printf 'C1\n' > c.ts; git add c.ts
+  stamp
+  run "$(hooksdir)/pre-commit"
+  [ "$status" -ne 7 ]
+  [[ "$output" != *"CHAINED_RAN"* ]]
+}
+
 @test "훅에 자기 식별 마커가 들어 있다" {
   # 정적 문자열 검사다 — 아무 일도 안 하는 훅이라도 마커만 있으면 통과하는
   # 게 맞다. 판정 로직 검증은 이 테스트의 목적이 아니다.
