@@ -13,11 +13,25 @@ description: Use when a commit is blocked by the KkochiKkochi gate, or when the 
 
 ## 1. 재료 수집
 
+검증 대상 목록은 다음 순서로 얻는다.
+
 ```bash
-git -c core.quotePath=false diff --cached --raw -z --abbrev=40 --no-renames
+QDIR="$(git rev-parse --git-path quiz-gate)"
+if [ -s "$QDIR/pending" ]; then
+  cat "$QDIR/pending"          # 훅이 남긴 (blob SHA, 경로) 쌍 — 탭 구분
+else
+  git -c core.quotePath=false diff --cached --raw -z --abbrev=40 --no-renames
+fi
 ```
 
-이것은 §5의 `record-pass.sh` 가 스스로 계산하는 것과 **정확히 같은 명령**이다. 여기서 보는 대상과 기록될 대상이 다르면 앞뒤가 안 맞는 퀴즈가 나온다.
+**`pending` 을 먼저 보는 이유가 중요하다.** git 은 `git commit -a` 나 `git commit -- <path>` 에서 훅에게 **임시 인덱스**를 물려준다. 그래서 훅 안의 `git diff --cached` 는 정확하지만, 나중에 평범한 셸에서 도는 같은 명령은 진짜 인덱스를 봐서 **다른 답**을 낸다. `pending` 은 훅이 자기가 계산한 답을 그대로 적어 둔 파일이다 ([D40](../../docs/DECISIONS.md)). §5의 `record-pass.sh` 도 정확히 같은 순서로 같은 대상을 고른다 — 여기서 보는 대상과 기록될 대상이 다르면 앞뒤가 안 맞는 퀴즈가 나온다.
+
+`pending` 의 각 줄은 `<blob SHA>\t<경로>` 다. 그 SHA 로 실제 내용을 볼 수 있다.
+
+```bash
+git cat-file -p <sha>          # 커밋될 새 내용 (삭제면 SHA 가 0 40개다)
+git show HEAD:<path>           # 변경 전 내용
+```
 
 출력이 비어 있으면 스테이징된 변경이 없다. 사용자에게 알리고 종료한다.
 
@@ -103,7 +117,8 @@ git -c core.quotePath=false diff --cached --raw -z --abbrev=40 --no-renames
 ## 5. 기록
 
 전 문항 통과 후 `record-pass.sh` 를 호출한다. 이 스크립트는 인자를 받지 않는다 —
-대상(SHA·경로)은 §1과 똑같이 `git diff --cached` 로 스스로 계산한다.
+대상(SHA·경로)은 §1과 똑같은 순서로 스스로 고른다(훅이 남긴 `pending` 이 있고
+신선하면 그것, 없으면 `git diff --cached`).
 
 Claude Code 에서는 `${CLAUDE_PLUGIN_ROOT}`, Codex 에서는 `${PLUGIN_ROOT}` 를 쓴다.
 아래 예시는 `${CLAUDE_PLUGIN_ROOT:-$PLUGIN_ROOT}` 로 두 환경 모두에서 그대로 복사해

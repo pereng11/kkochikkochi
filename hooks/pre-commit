@@ -1,6 +1,9 @@
 #!/bin/sh
 # KkochiKkochi 게이트 — git 이 직접 호출한다.
 # KKOCHIKKOCHI-HOOK-v1  ← 자기 식별 마커. 설치기가 이 문자열로 "내 훅"을 판별한다.
+#   이 문자열은 소유권만 표시한다. "낡았는가"는 설치기가 플러그인 원본과
+#   내용을 통째로 비교해서 판정한다 — 마커에 판 번호를 심으면 언젠가
+#   반드시 올리는 것을 잊는다. (D39)
 #
 # 여기서 git diff --cached 는 커밋될 내용 그 자체다. 명령 문자열을 파싱하지 않는다.
 
@@ -32,6 +35,20 @@ for marker_name in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-a
 done
 
 # ── 3. 에이전트가 만든 커밋인가 (D33) ─────────────────────────────
+#
+# 0차: 실제 터미널. 이 신호가 **다른 모든 신호보다 우선한다.** (D41)
+# git 은 pre-commit 훅의 표준입력(fd 0)만 /dev/null 로 바꿔치므로 fd 0 이
+# 아니라 fd 1/2 를 본다. fd 1/2 에 진짜 tty 가 붙어 있다 = 사람이 지금
+# 자기 터미널 앞에 앉아 손으로 쳤다는 뜻이고, D00 은 그 커밋을 막지 말라고
+# 말한다. 지원하는 두 에이전트의 Bash 도구는 파이프를 물려주므로(실측:
+# Claude Code fd 0/1/2 전부 non-tty) 이 신호는 사람과 에이전트를 정확히
+# 가른다. 핸드셰이크 뒤로 밀면, 에이전트 훅이 매 Bash 호출마다 마커를
+# 갱신하는 탓에 세션이 살아 있는 동안 120초 창이 닫히지 않아 옆 창에서
+# 손으로 친 커밋까지 막힌다 — D00 이 금지하는 바로 그것이다.
+if [ -t 1 ] || [ -t 2 ]; then
+  exit 0
+fi
+
 agent_signal=""
 
 # 1차: 핸드셰이크. 변수 이름에 의존하지 않아 버전 변경에 강하다. (D34)
@@ -49,14 +66,7 @@ if [ -f "$marker" ]; then
   fi
 fi
 
-# 2차: 음성 신호. 실제 터미널이 붙어 있으면 사람이 지금 직접 조작하고 있다는
-# 뜻이므로, 남아 있는 환경변수(3차)보다 이 신호가 우선한다. git 은 pre-commit
-# 훅의 표준입력(fd 0)만 /dev/null 로 바꿔치므로 fd 0 이 아니라 fd 1/2 를 본다.
-if [ -z "$agent_signal" ] && { [ -t 1 ] || [ -t 2 ]; }; then
-  exit 0
-fi
-
-# 3차: 직접 관찰한 환경변수만. 추측으로 채우지 않는다. (D34)
+# 2차: 직접 관찰한 환경변수만. 추측으로 채우지 않는다. (D34)
 if [ -z "$agent_signal" ]; then
   if [ -n "${CLAUDECODE:-}" ] || [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
     agent_signal="env:claude-code"
@@ -71,16 +81,46 @@ fi
 # 이스케이프만 풀어줄 뿐, 큰따옴표·역슬래시·탭은 여전히 C-quote 하므로 그
 # 플래그로는 못 막는다 — -z 는 애초에 아무것도 따옴표로 감싸지 않는다.
 # 쉘 변수·here-doc은 NUL을 담지 못하므로 tr로 개행으로 바꾸고, meta 줄과
-# path 줄을 번갈아 오는 두 줄 한 쌍으로 짝짓는다. (남는 한계: 경로 자체에
-# 진짜 개행 바이트가 들어 있으면 이 쌍짓기가 깨진다 — 개행으로 줄을 나누는
-# 이상 셸에서 피할 수 없고, 이전 구현도 이미 그 한계를 안고 있었다.)
-pending="$(git -c core.quotePath=false diff --cached --raw -z --abbrev=40 --no-renames \
+# path 줄을 번갈아 오는 두 줄 한 쌍으로 짝짓는다.
+#
+# 경로에 진짜 개행 바이트가 들어 있으면 그 쌍짓기가 깨진다 — 개행으로 줄을
+# 나누는 이상 셸에서 피할 수 없다. 문제는 그 경로 하나가 망가지는 데서
+# 끝나지 않는다는 것이다: 스트림이 한 칸 밀리면 **그 뒤의 파일들이 훅의
+# 시야에서 통째로 사라져** 아무 검증 없이 커밋되고, record-pass.sh 는
+# covered.tsv 에 --raw meta 줄을 그대로 담은 쓰레기 라인을 남긴다.
+# 그래서 meta 줄의 생김새를 매 짝마다 검사하고, 하나라도 어긋나거나 레코드
+# 수가 홀수면 **거기서 멈추고 경고와 함께 통과시킨다**(fail-open). 어긋난
+# 스트림으로 판정을 계속하는 것보다 이 커밋 하나를 놓치는 편이 낫다.
+if ! pending="$(git -c core.quotePath=false diff --cached --raw -z --abbrev=40 --no-renames \
            | tr '\0' '\n' \
-           | awk 'NR % 2 { split($0, f, " "); print f[4]; next } { print }')"
+           | awk '
+    function is_meta(s,   n, a) {
+      if (substr(s, 1, 1) != ":") return 0
+      n = split(s, a, " ")
+      # :<mode> <mode> <sha> <sha> <status>
+      if (n != 5) return 0
+      if (length(a[1]) != 7) return 0
+      if (length(a[3]) != 40 || length(a[4]) != 40) return 0
+      if (a[3] ~ /[^0-9a-f]/ || a[4] ~ /[^0-9a-f]/) return 0
+      return 1
+    }
+    NR % 2 { if (!is_meta($0)) exit 1; split($0, f, " "); print f[4]; next }
+           { print }
+    END    { if (NR % 2) exit 1 }
+  ')"; then
+  echo "kkochikkochi: 경고 — 커밋될 경로 목록을 해석할 수 없어(경로에 개행?) 이 커밋은 검증 없이 통과시킵니다" >&2
+  exit 0
+fi
 [ -n "$pending" ] || exit 0
 
 covered="$QDIR/covered.tsv"
 missing=""
+# 훅이 계산한 답을 그대로 넘겨줄 (sha, path) 목록. 스킬과 record-pass.sh 는
+# 이 파일을 읽는다 — 같은 명령을 다시 돌려서 같은 답이 나오리라 기대하지
+# 않는다. git 은 -a 나 -- <path> 커밋에서 훅에게 **임시 인덱스**를
+# 물려주므로(실측: GIT_INDEX_FILE=.../index.lock), 훅 밖에서 같은
+# `git diff --cached` 를 돌리면 다른 답이 나온다. (D40)
+missing_pairs=""
 i=0
 sha=""
 while IFS= read -r line; do
@@ -100,11 +140,29 @@ while IFS= read -r line; do
   fi
   missing="$missing   $path
 "
+  missing_pairs="$missing_pairs$sha	$path
+"
 done <<PENDING
 $pending
 PENDING
 
 [ -n "$missing" ] || exit 0
+
+# jq 가 없으면 통과시킨다. 이 훅 자체는 jq 를 쓰지 않지만 통과를 기록하는
+# record-pass.sh 는 jq 없이 한 줄도 쓰지 못한다 — 여기서 막으면 퀴즈를
+# 통과할 방법이 없는 채로 커밋이 영구히 막힌다. 이해와 무관한 이유로 커밋을
+# 영구히 막는 것이 이 프로젝트에서 가장 하지 말아야 할 일이다. 설치기가
+# 애초에 jq 없는 환경에서 설치를 거부하므로(D42) 여긴 마지막 방어선이다.
+if ! command -v jq >/dev/null 2>&1; then
+  echo "kkochikkochi: 경고 — jq 가 없어 퀴즈를 통과시킬 수 없으므로 이 커밋을 검증 없이 통과시킵니다 (jq 를 설치하세요)" >&2
+  exit 0
+fi
+
+# 훅이 계산한 답을 파일로 남긴다. 실패해도 커밋 차단 자체는 그대로 진행한다 —
+# 이 파일이 없으면 record-pass.sh 가 예전처럼 git diff --cached 로 폴백한다.
+if mkdir -p "$QDIR" 2>/dev/null; then
+  printf '%s' "$missing_pairs" > "$QDIR/pending" 2>/dev/null || :
+fi
 
 cat >&2 <<MSG
 🦡 KkochiKkochi — 이 커밋에 아직 검증되지 않은 변경이 있습니다.
