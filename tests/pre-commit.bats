@@ -30,13 +30,13 @@ teardown() { teardown_repo; }
   stamp
   run commit_as_human -m x
   [ "$status" -ne 0 ]              # 대조군: 커버 전엔 막힌다
-  mark_covered c.ts
+  stub_covered_line c.ts
   run commit_as_human -m x
   [ "$status" -eq 0 ]              # 커버 후엔 통과한다
 }
 
 @test "커버된 뒤 내용을 고치면 다시 막는다" {
-  printf 'C1\n' > c.ts; mark_covered c.ts
+  printf 'C1\n' > c.ts; stub_covered_line c.ts
   printf 'C2\n' > c.ts; git add c.ts
   stamp
   run commit_as_human -m x
@@ -102,9 +102,83 @@ teardown() { teardown_repo; }
   run commit_as_human -am x
   [ "$status" -ne 0 ]              # 대조군: 커버 전엔 워크트리 내용 기준으로도 막힌다
   [[ "$output" == *"a.ts"* ]]
-  mark_covered a.ts                # 워크트리 SHA 로 커버
+  stub_covered_line a.ts                # 워크트리 SHA 로 커버 (훅 단독 판정만 본다)
   run commit_as_human -am x
   [ "$status" -eq 0 ]
+}
+
+@test "C1: git commit -am 이 진짜 record-pass.sh 왕복으로 풀린다" {
+  # 예전에는 여기서 stub_covered_line 을 썼고, 그 스텁이 *올바른*
+  # record-pass.sh 가 낼 법한 줄을 내주는 바람에 이 테스트가 초록인 채로
+  # 실제 writer 는 그 줄을 만들어낼 수조차 없었다 (영구 교착).
+  #
+  # git 은 -a 커밋에서 훅에게 임시 인덱스를 물려주므로(GIT_INDEX_FILE=
+  # .../index.lock), 훅 밖에서 도는 record-pass.sh 의 git diff --cached 는
+  # 진짜 인덱스(비어 있음)를 본다. 훅이 pending 을 발표하지 않으면
+  # record-pass.sh 는 "커밋될 내용이 없습니다"로 죽고, 다시 커밋해도 같은
+  # 곳에서 막혀 HEAD 가 영원히 움직이지 않는다.
+  printf 'A2\n' > a.ts             # 워크트리만 수정, 스테이징 안 함
+  stamp
+  run commit_as_human -am x
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"a.ts"* ]]
+
+  run record_pass
+  [ "$status" -eq 0 ]
+
+  run commit_as_human -am x
+  [ "$status" -eq 0 ]              # 라운드 2 는 통과해야 한다
+  run git log --oneline
+  [[ "$output" == *"x"* ]]         # HEAD 가 실제로 움직였다
+}
+
+@test "C1: git commit -- <path> 가 그 커밋에 없는 파일을 기록하지 않는다" {
+  printf 'T\n' > tracked.txt; printf 'O\n' > other.txt
+  git add tracked.txt other.txt; commit_as_human -qm base
+  printf 'T2\n' > tracked.txt      # 워크트리만
+  printf 'O2\n' > other.txt; git add other.txt   # 이쪽은 스테이징됨
+  stamp
+  run commit_as_human -m x -- tracked.txt
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"tracked.txt"* ]]
+
+  run record_pass
+  [ "$status" -eq 0 ]
+  # 기록된 것은 이 커밋에 실제로 담기는 tracked.txt 여야 한다.
+  # 폴백(진짜 인덱스)을 타면 other.txt — 이 커밋에 들어가지도 않는 파일 — 이 기록된다.
+  run cut -f2 "$(qdir)/covered.tsv"
+  [[ "$output" == *"tracked.txt"* ]]
+  [[ "$output" != *"other.txt"* ]]
+
+  run commit_as_human -m x -- tracked.txt
+  [ "$status" -eq 0 ]
+}
+
+@test "C1: pending 은 기록에 성공하면 소비되어 사라진다" {
+  printf 'A2\n' > a.ts
+  stamp
+  run commit_as_human -am x
+  [ "$status" -ne 0 ]
+  [ -f "$(qdir)/pending" ]         # 훅이 자기 답을 발표했다
+  run record_pass
+  [ "$status" -eq 0 ]
+  [ ! -f "$(qdir)/pending" ]       # 소비됐다 — 다음 /kk 가 낡은 집합을 집어먹지 않는다
+}
+
+@test "C1: 낡은 pending 은 무시하고 git diff --cached 로 폴백한다" {
+  printf 'C1\n' > c.ts; git add c.ts
+  stamp
+  run commit_as_human -m x
+  [ "$status" -ne 0 ]
+  [ -f "$(qdir)/pending" ]
+  # pending 에 지금 스테이징과 무관한 쓰레기를 넣고 신선도 창(900초) 밖으로 민다
+  printf '%s\tghost.ts\n' "$NULL_SHA" > "$(qdir)/pending"
+  touch -t 202601010000 "$(qdir)/pending"
+  run record_pass
+  [ "$status" -eq 0 ]
+  run cut -f2 "$(qdir)/covered.tsv"
+  [[ "$output" == *"c.ts"* ]]
+  [[ "$output" != *"ghost.ts"* ]]
 }
 
 @test "비ASCII 경로도 실제 SHA 로 판정한다" {
@@ -114,7 +188,7 @@ teardown() { teardown_repo; }
   run commit_as_human -m x
   [ "$status" -ne 0 ]
   # NULL_SHA 로 떨어지지 않았는지 확인: 커버하면 통과해야 한다
-  mark_covered 한글.ts
+  stub_covered_line 한글.ts
   run commit_as_human -m x
   [ "$status" -eq 0 ]
 }
@@ -128,7 +202,7 @@ teardown() { teardown_repo; }
   run commit_as_human -m x
   [ "$status" -ne 0 ]
   [[ "$output" == *'we"ird.ts'* ]]
-  mark_covered 'we"ird.ts'
+  stub_covered_line 'we"ird.ts'
   run commit_as_human -m x
   [ "$status" -eq 0 ]
 }
@@ -148,7 +222,7 @@ teardown() { teardown_repo; }
   run commit_as_human -m x
   [ "$status" -ne 0 ]
   [[ "$output" == *'back\slash.ts'* ]]
-  mark_covered 'back\slash.ts'
+  stub_covered_line 'back\slash.ts'
   run commit_as_human -m x
   [ "$status" -eq 0 ]
 }
@@ -165,7 +239,7 @@ teardown() { teardown_repo; }
   run commit_as_human -m x
   [ "$status" -ne 0 ]
   [[ "$output" == *'tab\there.ts'* ]]
-  mark_covered 'tab\there.ts'
+  stub_covered_line 'tab\there.ts'
   run commit_as_human -m x
   [ "$status" -eq 0 ]
 }
@@ -193,8 +267,65 @@ teardown() { teardown_repo; }
   git merge --no-ff feat -m merge || true   # 충돌 — MERGE_HEAD 가 남는다
   printf 'RESOLVED\n' > a.ts; git add a.ts
   stamp                                     # 신선한 핸드셰이크로도
+
+  # 대조군을 먼저 본다: 통과시킨 것이 MERGE_HEAD 때문임을 못 박는다. 마커를
+  # 잠깐 치우면 똑같은 스테이징·똑같은 핸드셰이크로 막혀야 한다. 이게 없으면
+  # "아무것도 안 하는 훅"도 이 테스트를 통과한다. (커밋을 먼저 성공시켜 버리면
+  # 스테이징이 비어 대조군이 "커밋할 것 없음"으로 무력해진다.)
+  merge_head="$(git rev-parse --git-path MERGE_HEAD)"
+  mv "$merge_head" "$merge_head.stash"
+  run commit_as_human -m resolved
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"a.ts"* ]]
+
+  mv "$merge_head.stash" "$merge_head"
   run commit_as_human -m resolved
   [ "$status" -eq 0 ]                       # 커버 여부와 무관하게 통과해야 한다
+}
+
+@test "MERGE_HEAD 말고 다른 진행중 마커도 전부 통과시킨다" {
+  # 탈출 목록이 MERGE_HEAD 하나로 줄어드는 돌연변이를 잡는다. cherry-pick·
+  # revert·rebase 는 이번 세션에 새로 쓴 코드가 아니라 다른 커밋의 내용을
+  # 그대로 올리는 것이므로 퀴즈 대상이 아니다.
+  #
+  # 마커마다 새 파일을 쓴다 — 통과한 커밋이 스테이징을 비워 다음 회차의
+  # 대조군이 "커밋할 것 없음"으로 무력해지는 것을 피하기 위해서다.
+  for marker in CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply; do
+    f="m_$marker.ts"
+    printf '%s\n' "$marker" > "$f"; git add "$f"
+    stamp
+
+    # 대조군: 마커가 없으면 막힌다
+    run commit_as_human -m "x-$marker"
+    [ "$status" -ne 0 ] || { echo "대조군 실패: $marker 없이도 통과했다"; return 1; }
+    [[ "$output" == *"$f"* ]]
+
+    path="$(git rev-parse --git-path "$marker")"
+    case "$marker" in
+      rebase-*) mkdir -p "$path" ;;
+      *) git rev-parse HEAD > "$path" ;;
+    esac
+    run commit_as_human -m "x-$marker"
+    [ "$status" -eq 0 ] || { echo "marker=$marker 에서 통과하지 않았다: $output"; return 1; }
+    rm -rf "$path"
+  done
+}
+
+@test "스테이징된 삭제도 게이트 대상이다 (null SHA 를 건너뛰지 않는다)" {
+  # --raw 는 삭제된 파일에 40개의 0 SHA 를 준다. 훅이 그 SHA 를 "빈 값"으로
+  # 오해하고 건너뛰면, 스테이징된 삭제는 어떤 검증도 없이 커밋된다.
+  git rm -q old.ts
+  stamp
+  run commit_as_human -m x
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"old.ts"* ]]
+
+  # 그리고 진짜 record-pass.sh 왕복으로 풀려야 한다 (스텁이 아니라).
+  run record_pass
+  [ "$status" -eq 0 ]
+  grep -q "^${NULL_SHA}"$'\t'"old.ts"$'\t' "$(qdir)/covered.tsv"
+  run commit_as_human -m x
+  [ "$status" -eq 0 ]
 }
 
 # ── 체이닝 ──
@@ -232,6 +363,10 @@ teardown() { teardown_repo; }
   run "$(hooksdir)/pre-commit"
   [ "$status" -ne 7 ]
   [[ "$output" != *"CHAINED_RAN"* ]]
+  # 체이닝을 건너뛴 다음 우리 판정이 실제로 이어져야 한다. 이 두 줄이 없으면
+  # "그냥 exit 0 하는 훅"도 위 두 검사를 우연히 통과한다.
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"c.ts"* ]]
 }
 
 @test "훅에 자기 식별 마커가 들어 있다" {
@@ -240,16 +375,18 @@ teardown() { teardown_repo; }
   grep -q 'KKOCHIKKOCHI-HOOK-v1' "$(hooksdir)/pre-commit"
 }
 
-# ── 음성 신호 (TTY) ──
+# ── 음성 신호 (TTY) — D41 의 우선순위를 못 박는다 ──
 
 @test "실제 터미널이 있으면 환경변수 신호보다 우선해 통과한다" {
   # git 은 pre-commit 훅의 표준입력만 리다이렉트한다. fd 1/2 에 진짜 pty 가
   # 붙어 있으면 사람이 지금 터미널에 있다는 뜻이고, 남아 있는 CLAUDECODE 같은
-  # 환경변수보다 이 신호가 우선해야 한다 (그렇지 않으면 에이전트가 띄운
-  # 셸에 사람이 앉아 있어도 구제할 방법이 없다).
+  # 환경변수보다 이 신호가 우선해야 한다.
   printf 'C1\n' > c.ts; git add c.ts
-  run with_tty env CLAUDECODE=1 git commit -m x
-  [ "$status" -eq 0 ]
+  with_tty env CLAUDECODE=1 git commit -m x || {
+    echo "pty 를 할당하지 못했다 — 이 테스트는 pty 없이는 아무것도 증명하지 못한다" >&2
+    return 1
+  }
+  [ "$TTY_RC" -eq 0 ]
   # 대조군: 같은 CLAUDECODE 값이라도 진짜 터미널이 없으면 (bats 의 run 이
   # 늘 그렇듯) 여전히 막힌다 — 즉 방금 통과한 건 TTY 신호가 실제로 한 일이다.
   # (c.ts 는 이미 위에서 커밋됐으니 새 파일 d.ts 로 다시 스테이징한다 —
@@ -257,6 +394,31 @@ teardown() { teardown_repo; }
   printf 'C2\n' > d.ts; git add d.ts
   run env CLAUDECODE=1 git commit -m y
   [ "$status" -ne 0 ]
+}
+
+@test "실제 터미널은 신선한 핸드셰이크보다도 우선해 통과한다 (D41)" {
+  # 이 테스트가 없으면 "TTY 가 핸드셰이크보다 먼저" 와 "핸드셰이크가 먼저"
+  # 두 배치가 **똑같이** 초록이었다 (돌연변이 감사: 69/69 생존).
+  #
+  # 지금 배치가 옳은 이유: stamp-agent.sh 는 매 Bash 호출마다 마커를
+  # 갱신하므로, 에이전트 세션이 살아 있는 동안 120초 창은 사실상 닫히지
+  # 않는다. 핸드셰이크가 이기면 옆 창에서 사람이 손으로 친 커밋이 막힌다 —
+  # D00 이 명시적으로 금지하는 마찰이다.
+  printf 'C1\n' > c.ts; git add c.ts
+  stamp                                   # 방금 찍힌, 최대한 신선한 마커
+  # commit_as_human 은 셸 함수라 서브셸로 넘어가지 않는다 — 여기서는 풀어 쓴다.
+  with_tty env -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID git commit -m x || {
+    echo "pty 를 할당하지 못했다 — 이 테스트는 pty 없이는 아무것도 증명하지 못한다" >&2
+    return 1
+  }
+  [ "$TTY_RC" -eq 0 ]
+  # 대조군: 똑같이 신선한 마커인데 pty 만 없으면 막힌다. 즉 통과시킨 것은
+  # 오직 TTY 신호다.
+  printf 'C2\n' > d.ts; git add d.ts
+  stamp
+  run commit_as_human -m y
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"d.ts"* ]]
 }
 
 # ── 신선도 계산의 내구성 ──
@@ -281,8 +443,60 @@ teardown() { teardown_repo; }
   chmod +x "$fakebin/stat"
   printf 'C1\n' > c.ts; git add c.ts
   stamp
+
+  # 대조군을 먼저 본다: 진짜 stat 으로는 같은 마커·같은 스테이징이 막힌다.
+  # 이게 없으면 "그냥 exit 0 하는 훅"도 아래 검사를 전부 통과한다 — 통과의
+  # 원인이 가드인지 훅이 아무 일도 안 한 것인지 가려지지 않는다. (순서가
+  # 중요하다: 아래 커밋이 성공하면 스테이징이 비어 대조군이 무력해진다.)
+  run commit_as_human -m x
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"c.ts"* ]]
+
   PATH="$fakebin:$PATH" run commit_as_human -m x
   [ "$status" -eq 0 ]
   [[ "$output" != *"Illegal number"* ]]
   [[ "$output" != *"unbound variable"* ]]
+}
+
+# ── fail-open: 이해와 무관한 이유로 커밋을 영구히 막지 않는다 ──
+
+@test "경로에 개행이 있어 스트림이 어긋나면 경고와 함께 통과시킨다" {
+  # 예전에는 그 경로 하나만 망가지는 것이 아니라, 짝짓기가 한 칸 밀려
+  # **뒤따르는 파일이 훅의 시야에서 통째로 사라진 채** 커밋됐다.
+  printf 'N\n' > "$(printf 'we\nird.ts')"
+  printf 'Z\n' > zzz.ts
+  git add -A
+  stamp
+  run commit_as_human -m x
+  [ "$status" -eq 0 ]                       # 어긋난 스트림으로 판정을 이어가지 않는다
+  [[ "$output" == *"경고"* ]]               # 조용히 통과시키지도 않는다
+
+  # 대조군: 개행 없는 같은 파일 집합이면 정상적으로 막힌다.
+  printf 'Y\n' > yyy.ts; git add yyy.ts
+  stamp
+  run commit_as_human -m y
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"yyy.ts"* ]]
+}
+
+@test "jq 가 없으면 경고와 함께 통과시킨다 (통과할 방법이 없는 게이트를 만들지 않는다)" {
+  # record-pass.sh 는 jq 없이 한 줄도 쓰지 못한다. 그 환경에서 훅이 막으면
+  # 이해와 무관한 이유로 커밋이 영구히 막힌다 — 이 프로젝트의 대죄다.
+  fakebin="$(mktemp -d)"
+  printf '#!/bin/sh\nexit 127\n' > "$fakebin/jq"   # PATH 앞단에서 jq 를 가린다
+  chmod +x "$fakebin/jq"
+  # command -v 는 실행 가능 파일이 있으면 성공하므로, 아예 없는 상태를
+  # 만들려면 jq 가 든 디렉터리를 뺀 PATH 를 써야 한다.
+  nojq="$(mktemp -d)"
+  for b in git awk sed grep cat date stat mkdir rm mv cp chmod printf tr head wc env dirname uname sort cut touch expr basename gettext; do
+    p="$(command -v "$b" 2>/dev/null)" && ln -sf "$p" "$nojq/$b"
+  done
+  printf 'C1\n' > c.ts; git add c.ts
+  stamp
+  # 대조군 먼저: jq 가 있으면 막힌다
+  run commit_as_human -m x
+  [ "$status" -ne 0 ]
+  PATH="$nojq" run commit_as_human -m x
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"jq"* ]]
 }

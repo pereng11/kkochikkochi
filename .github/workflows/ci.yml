@@ -43,3 +43,7 @@ jobs:
           jq . .claude-plugin/marketplace.json > /dev/null
           jq . .codex-plugin/plugin.json > /dev/null
           jq . .agents/plugins/marketplace.json > /dev/null
+          # 문법 검사만으로는 부족하다 — 두 hooks.json 은 의도적으로 서로 다른
+          # 변수를 쓰므로(${CLAUDE_PLUGIN_ROOT} vs ${PLUGIN_ROOT}) 이름이
+          # 틀리면 JSON 은 멀쩡한데 stamp-agent.sh 가 아예 실행되지 않는다.
+          # command 문자열을 실제로 실행해 보는 것은 tests/manifests.bats 다.

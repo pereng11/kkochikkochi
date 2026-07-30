@@ -124,28 +124,46 @@ VALID='{"questions":[{"axis":"facts","q":"무엇이 바뀌었나?","evidence":"c
   [ "$(wc -l < "$(qdir)/covered.tsv")" -ge 2 ]
 }
 
-@test "기록 후 gate.sh 가 통과시킨다 (종단 확인)" {
+@test "기록 후 게이트가 통과시킨다 (종단 확인)" {
+  # 예전 판은 두 겹으로 반증 불가능했다: (1) stamp 를 하지 않아 훅이
+  # covered.tsv 를 읽기도 전에 "에이전트 신호 없음"으로 빠져나갔고,
+  # (2) v1 gate.sh 시절의 잔재로 stdin 을 읽지 않는 훅에 JSON 을 파이프해
+  # 넣고 그 무반응을 성공으로 읽었다. 진짜 `git commit` 왕복으로 바꾼다.
+  install_hook
   printf 'C1\n' > c.ts; git add c.ts
-  record "$VALID"
-  payload=$(jq -n --arg c 'git commit -m x' --arg cwd "$PWD" \
-    '{tool_name:"Bash", cwd:$cwd, tool_input:{command:$c}}')
-  run bash -c "echo '$payload' | bash '$PLUGIN_ROOT/hooks/pre-commit'"
-  [ -z "$output" ]
+  stamp
+  run commit_as_human -m x
+  [ "$status" -ne 0 ]              # 대조군: 기록 전에는 막힌다
+  [[ "$output" == *"c.ts"* ]]
+
+  run record "$VALID"
+  [ "$status" -eq 0 ]
+
+  run commit_as_human -m x
+  [ "$status" -eq 0 ]              # 기록 후에는 통과한다
 }
 
 # 아래 세 테스트는 Task 1~3 리뷰에서 넘어온 계약을 record-pass.sh 스스로가
-# 지키는지 확인한다 (mark_covered 같은 테스트 전용 헬퍼가 아니라 실제
+# 지키는지 확인한다 (stub_covered_line 같은 테스트 전용 헬퍼가 아니라 실제
 # record-pass.sh 출력으로). agent-session 핸드셰이크를 직접 남기고 진짜
 # `git commit` 을 설치된 훅으로 태워, record-pass.sh 가 쓴 철자가 훅이 읽는
 # 철자와 정확히 같은지까지 왕복으로 증명한다.
+#
+# 세 테스트 모두 **기록 전에 막힌다**는 대조군을 먼저 본다. 그게 없으면
+# "커밋이 통과했다"가 기록 덕분인지 훅이 애초에 아무것도 안 막는 덕분인지
+# 가려지지 않는다 — 실제로 `hooks/pre-commit` 을 통째로 `exit 0` 으로
+# 바꾼 돌연변이가 69개 중 49개 테스트에서 살아남았다.
 
 @test "따옴표가 든 경로도 기록된 철자 그대로 게이트를 통과시킨다" {
   install_hook
   printf 'W1\n' > 'we"ird.ts'; git add 'we"ird.ts'
+  stamp
+  run commit_as_human -m x
+  [ "$status" -ne 0 ]                        # 대조군
+  [[ "$output" == *'we"ird.ts'* ]]
   run record "$VALID"
   [ "$status" -eq 0 ]
   grep -Fq 'we"ird.ts' "$(qdir)/covered.tsv"
-  stamp
   run commit_as_human -m x
   [ "$status" -eq 0 ]
 }
@@ -153,10 +171,13 @@ VALID='{"questions":[{"axis":"facts","q":"무엇이 바뀌었나?","evidence":"c
 @test "역슬래시가 든 경로도 기록된 철자 그대로 게이트를 통과시킨다" {
   install_hook
   printf 'W2\n' > 'back\slash.ts'; git add 'back\slash.ts'
+  stamp
+  run commit_as_human -m x
+  [ "$status" -ne 0 ]                        # 대조군
+  [[ "$output" == *'back\slash.ts'* ]]
   run record "$VALID"
   [ "$status" -eq 0 ]
   grep -Fq 'back\slash.ts' "$(qdir)/covered.tsv"
-  stamp
   run commit_as_human -m x
   [ "$status" -eq 0 ]
 }
@@ -165,10 +186,13 @@ VALID='{"questions":[{"axis":"facts","q":"무엇이 바뀌었나?","evidence":"c
   install_hook
   printf 'OLD2\n' > old2.ts; git add old2.ts; commit_as_human -qm add-old2
   git rm -q old2.ts
+  stamp
+  run commit_as_human -m x
+  [ "$status" -ne 0 ]                        # 대조군: 삭제도 게이트 대상이다
+  [[ "$output" == *"old2.ts"* ]]
   run record "$VALID"
   [ "$status" -eq 0 ]
   grep -q "^${NULL_SHA}"$'\t'"old2.ts"$'\t' "$(qdir)/covered.tsv"
-  stamp
   run commit_as_human -m x
   [ "$status" -eq 0 ]
 }

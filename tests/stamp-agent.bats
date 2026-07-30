@@ -41,12 +41,25 @@ stamp_run() {  # $1 = agent, $2 = command
   # GNU stat 은 -f 를 --file-system 으로 해석해 종료코드 0으로 헛값을 낸다
   # (hooks/pre-commit 과 동일한 함정). GNU 형식(-c)을 먼저 시도해야 진짜
   # 실패일 때만 BSD 형식(-f)으로 폴백한다.
+  #
+  # 이 저장소에서 마커 갱신을 지키는 유일한 주장이다. 갱신이 회귀하면 120초가
+  # 지난 모든 세션이 "사람"으로 강등돼 커밋이 아무 표시 없이 게이트를 빠져나간다.
+  #
+  # 예전 판의 `|| [ "$second" -ne 0 ]` 는 이 테스트를 반증 불가능하게 만들었다:
+  # touch 로 밀어 넣은 2026-01-01 은 0 이 아니므로 둘째 항이 무조건 참이라
+  # 갱신을 전혀 하지 않는 돌연변이도 초록이었다. `-gt "$first"` 만 남기는
+  # 것으로도 부족하다 — 갱신된 시각이 first 와 같은 초일 수 있다. 그래서
+  # "touch 로 밀어 넣은 값이 아니다" 를 직접 주장한다.
+  mtime_of() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1"; }
   stamp_run claude-code
-  first=$(stat -c %Y "$(qdir)/agent-session" 2>/dev/null || stat -f %m "$(qdir)/agent-session")
+  first=$(mtime_of "$(qdir)/agent-session")
   touch -t 202601010000 "$(qdir)/agent-session"
+  touched=$(mtime_of "$(qdir)/agent-session")
+  [ "$touched" -ne "$first" ]                 # touch 가 실제로 밀어 넣었는지 확인
   stamp_run claude-code
-  second=$(stat -c %Y "$(qdir)/agent-session" 2>/dev/null || stat -f %m "$(qdir)/agent-session")
-  [ "$second" -gt "$first" ] || [ "$second" -ne 0 ]
+  second=$(mtime_of "$(qdir)/agent-session")
+  [ "$second" -ne "$touched" ]                # 갱신되지 않으면 여기서 걸린다
+  [ "$second" -ge "$first" ]
 }
 
 @test "git 저장소가 아니면 조용히 종료한다" {
