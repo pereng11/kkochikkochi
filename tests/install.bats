@@ -84,6 +84,60 @@ inst() { bash "$PLUGIN_ROOT/scripts/install.sh" "$@"; }
   [ "$status" -eq 2 ]
 }
 
+# ── I5: 낡은 설치는 0 이 아니라 3 이다 ──
+
+@test "마커는 있지만 내용이 다른 훅은 status 3 (낡음)" {
+  # 예전에는 마커 문자열만 보고 0("설치됨")을 냈다. 그래서 어떤 수정도
+  # 이미 설치된 저장소에 영원히 도달하지 못했다 — 헬스체크는 0 이 아닐
+  # 때만 반응하기 때문이다.
+  printf '#!/bin/sh\n# KKOCHIKKOCHI-HOOK-v1 (ancient)\nexit 0\n' > "$(hooksdir)/pre-commit"
+  chmod +x "$(hooksdir)/pre-commit"
+  run inst status
+  [ "$status" -eq 3 ]
+  # 그리고 install 이 실제로 그것을 고쳐 0 으로 되돌린다
+  inst install
+  run inst status
+  [ "$status" -eq 0 ]
+}
+
+@test "실행 권한이 없는 우리 훅도 status 3" {
+  # git 은 실행 권한 없는 훅을 무시한다 — 0 을 내면 게이트가 조용히 없다.
+  inst install
+  run inst status
+  [ "$status" -eq 0 ]              # 대조군
+  chmod -x "$(hooksdir)/pre-commit"
+  run inst status
+  [ "$status" -eq 3 ]
+}
+
+@test "설치 직후 status 는 3 이 아니라 0 이다 (거짓 낡음 없음)" {
+  # 내용 비교가 항상 어긋나면 헬스체크가 재설치를 무한 요구하게 된다.
+  inst install
+  run inst status
+  [ "$status" -eq 0 ]
+  inst install                     # 재설치도 멱등
+  run inst status
+  [ "$status" -eq 0 ]
+}
+
+# ── I4: jq 없이 설치하지 않는다 ──
+
+@test "jq 가 없으면 설치를 거부한다" {
+  nojq="$(mktemp -d)"
+  for b in git bash sh awk sed grep cat date stat mkdir rm mv cp chmod ln printf tr head find wc env dirname uname id sort cut touch cmp expr basename; do
+    p="$(command -v "$b" 2>/dev/null)" && ln -sf "$p" "$nojq/$b"
+  done
+  PATH="$nojq" run inst install
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"jq"* ]]
+  # 게이트가 설치되지 않았어야 한다 — 통과할 방법이 없는 게이트를 남기면 안 된다
+  [ ! -f "$(hooksdir)/pre-commit" ]
+  # 대조군: jq 가 있으면 같은 명령이 설치한다
+  run inst install
+  [ "$status" -eq 0 ]
+  [ -x "$(hooksdir)/pre-commit" ]
+}
+
 # ── 실패 시 훅이 사라지지 않는다 (cp/mv 를 가짜로 바꿔 중간 실패를 흉내낸다) ──
 
 @test "새 훅 준비(cp)가 실패해도 기존 훅이 사라지지 않는다" {

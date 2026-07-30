@@ -4,6 +4,14 @@
 # 자기 식별 마커로 "내 훅"을 판별한다 — pre-commit 프레임워크 방식. (D38)
 # core.hooksPath 가 설정된 저장소에서는 설치하지 않는다: 실효 디렉터리가
 # 저장소에 추적되므로, 말없이 쓰면 git status 에 뜨고 커밋에 섞인다. (D32)
+#
+# status 종료 코드 (호출자와의 계약 — 임의로 바꾸지 말 것)
+#   0  설치됨, 그리고 지금 플러그인이 배포하는 사본과 동일하다
+#   1  설치되지 않았다
+#   2  core.hooksPath 저장소라 설치를 거부했다 — 사람 판단이 필요하다
+#   3  우리 훅이긴 한데 낡았다(내용이 다르거나 실행 권한이 없다) — 재설치하면 된다
+# 3 이 없던 시절에는 낡은 훅이 0("설치됨")으로 보고되어, 어떤 수정도 이미
+# 설치된 저장소에 영원히 도달하지 못했다. (D39)
 
 set -uo pipefail
 
@@ -20,20 +28,43 @@ HOOKS_DIR="$(git rev-parse --git-path hooks)"
 TARGET="$HOOKS_DIR/pre-commit"
 CHAINED="$TARGET$CHAINED_SUFFIX"
 
+# "우리 훅인가" — 소유권만 가른다. 마커 문자열은 판(revision)을 구분하지
+# 못하므로 이것만으로 "최신인가"를 답할 수 없다.
 is_ours() { [ -f "$1" ] && grep -q "$MARKER" "$1" 2>/dev/null; }
+
+# "지금 플러그인이 배포하는 그 훅인가" — 마커 안에 판 번호를 심는 대신
+# 플러그인 원본과 내용을 통째로 비교한다. 판 번호는 사람이 손으로 올려야
+# 하므로 언젠가 반드시 잊히지만, 내용 비교는 잊힐 수가 없다. 실행 권한도
+# 함께 본다 — 실행 권한이 없는 훅은 git 이 그냥 무시하므로 "설치됨"이라고
+# 답하면 게이트가 조용히 없는 상태가 된다.
+is_current() { is_ours "$1" && [ -x "$1" ] && cmp -s "$SRC" "$1"; }
 
 hookspath_set() { [ -n "$(git config --get core.hooksPath || true)" ]; }
 
 # core.hooksPath 가 설정돼 있으면 "설치됨/아님"을 가를 수 없다 — 애초에
 # 우리가 설치를 거부하는 상태이므로, install 과 같은 exit 2 로 통일해
-# 호출자(예: Task 4 의 헬스체크)가 "바로 설치해도 됨"과 "사람 판단이
-# 필요함"을 구분할 수 있게 한다.
+# 호출자(예: 헬스체크)가 "바로 설치해도 됨"과 "사람 판단이 필요함"을
+# 구분할 수 있게 한다.
 cmd_status() {
   hookspath_set && exit 2
-  is_ours "$TARGET" && exit 0 || exit 1
+  is_ours "$TARGET" || exit 1
+  # 원본을 읽을 수 없으면 낡았는지 아닌지 판정할 근거가 없다. 애매한 경우는
+  # 통과시킨다 (D00) — 여기서 3을 내면 헬스체크가 고칠 수 없는 재설치를
+  # 영원히 요구하게 된다.
+  [ -r "$SRC" ] || exit 0
+  is_current "$TARGET" && exit 0 || exit 3
 }
 
 cmd_install() {
+  # jq 가 없으면 설치하지 않는다. 게이트(hooks/pre-commit)는 jq 없이도 잘
+  # 돌지만 통과를 기록하는 record-pass.sh 는 jq 없이는 한 줄도 쓰지 못한다 —
+  # 그대로 설치하면 "퀴즈를 통과할 방법이 없는데 커밋은 막히는" 저장소를
+  # 만들어 놓는 셈이다. 이해와 무관한 이유로 커밋을 영구히 막는 것은 이
+  # 프로젝트에서 가장 하지 말아야 할 일이다. (D42)
+  command -v jq >/dev/null 2>&1 || die "jq 가 필요합니다 — 설치한 뒤 다시 실행하세요.
+  게이트는 jq 없이도 커밋을 막지만, 퀴즈 통과를 기록하는 record-pass.sh 가
+  jq 를 필요로 합니다. 지금 설치하면 통과할 방법이 없는 게이트가 됩니다."
+
   if hookspath_set; then
     cat >&2 <<MSG
 kkochikkochi: 이 저장소는 core.hooksPath 를 사용합니다 ($(git config --get core.hooksPath)).
