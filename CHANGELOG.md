@@ -21,6 +21,10 @@
 ### Changed
 - `README.md` — 경로에 탭이 든 경우를 "복구 불가능"이라고 적었던 것을 바로잡았다(`--no-verify` 와 `uninstall` 로 회복된다). 건강검진이 매 Bash 호출마다 도는 것처럼 읽히던 설명과, 설치가 훅에 의해 자동 실행되고 커밋이 이어지는 것처럼 읽히던 설명도 실제 동작에 맞췄다
 - `tests/helper.bash` 의 `mark_covered()` 를 `stub_covered_line()` 으로 바꿨다. 이름이 진짜 writer 처럼 읽혀 `git commit -am` 교착을 가리고 있었다 — 왕복 주장에는 진짜 `record-pass.sh` 만 쓴다
+- **오답 선택지에만 되묻는 문장이 붙어 정답이 새던 문제.** "그렇다면 ~이지 않을까?" 같은 표지가 오답에만 달려, 코드를 읽지 않고 그것만 지워도 정답에 닿았다. 모든 선택지를 같은 문법으로 쓰고 평서문으로 끝낸다(`SKILL.md` §2, `ask/claude-code.md`)
+- **문항 한글이 깨져 나오던 문제.** 도구 인자에 한글을 `\uXXXX` 로 손수 적다가 음절이 어긋났다(바뀐 → 바뀌, 멀쩡한 → 멀짎ka한). 이제 리터럴로만 쓴다(`skills/kkochikkochi/ask/claude-code.md`)
+- **Claude Code 에서 문항이 터미널 폭에 잘려 읽히지 않던 문제.** `AskUserQuestion` 의 `question`·`label` 이 잘려 사용자가 문제를 읽지 못한 채 막히는 것을 실측했다. 이제 한 번에 1문항만 내고, 문항 전문과 근거 코드는 모든 선택지의 `preview` 에 반복해 싣는다(`skills/kkochikkochi/ask/claude-code.md`)
+- 문항 문장 규칙을 `SKILL.md` §2 에 넣었다. 번역투·좌향 수식·이중 조사처럼 문항에서 반복되는 것만 표로 추렸고, 룰북 전문은 `skills/kkochikkochi/references/korean-sentences.md` 에 두었다([im-not-ai](https://github.com/epoko77-ai/im-not-ai) 사본, MIT). 더 손이 필요하면 `humanize-korean` 을 부르고, 설치돼 있지 않으면 그냥 진행한다([D46](docs/DECISIONS.md))
 
 ### Added
 - `tests/manifests.bats` — 두 훅 매니페스트의 `command` 문자열을 **실제로 실행해** 핸드셰이크가 남는지 확인한다. 변수 이름이 틀리면 JSON 은 멀쩡한데 모든 에이전트 커밋이 "사람"으로 분류되는데, 그 실패에 행동 커버리지가 전혀 없었다

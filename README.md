@@ -101,6 +101,8 @@ bash scripts/install.sh status
 
 필요 도구: `git`, `jq`
 
+선택: [im-not-ai](https://github.com/epoko77-ai/im-not-ai) 의 `humanize-korean` — 문항 문장을 다듬을 때 쓴다. 없어도 게이트는 그대로 동작한다([D46](docs/DECISIONS.md)).
+
 ## 무엇을 묻는가
 
 | 축 | 예시 |
