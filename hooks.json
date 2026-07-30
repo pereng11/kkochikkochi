@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/stamp-agent.sh\" --agent claude-code",
+            "command": "bash \"${PLUGIN_ROOT}/scripts/stamp-agent.sh\" --agent codex",
             "timeout": 5
           }
         ]
