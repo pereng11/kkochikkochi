@@ -1,0 +1,15 @@
+{
+  "name": "kkochikkochi",
+  "interface": {
+    "displayName": "KkochiKkochi",
+    "shortDescription": "A comprehension gate for AI-assisted coding"
+  },
+  "plugins": [
+    {
+      "name": "kkochikkochi",
+      "source": { "source": "local", "path": "./" },
+      "policy": { "installation": "AVAILABLE" },
+      "category": "Engineering"
+    }
+  ]
+}

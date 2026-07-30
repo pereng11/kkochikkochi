@@ -5,7 +5,7 @@
   },
   "metadata": {
     "description": "A comprehension gate for AI-assisted coding. Blocks the commit until you can explain what changed.",
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "plugins": [
     {

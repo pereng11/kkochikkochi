@@ -1,0 +1,17 @@
+{
+  "name": "kkochikkochi",
+  "version": "0.2.0",
+  "description": "A comprehension gate for AI-assisted coding. Blocks the commit until you can explain what changed.",
+  "author": {
+    "name": "KkochiKkochi contributors"
+  },
+  "license": "MIT",
+  "keywords": ["gate", "comprehension", "quiz", "review", "git", "commit"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "KkochiKkochi",
+    "shortDescription": "Blocks the commit until you can explain what changed",
+    "developerName": "KkochiKkochi contributors",
+    "category": "Engineering"
+  }
+}
