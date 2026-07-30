@@ -2,7 +2,7 @@
   "name": "kkochikkochi",
   "interface": {
     "displayName": "KkochiKkochi",
-    "shortDescription": "A comprehension gate for AI-assisted coding"
+    "shortDescription": "Blocks the commit until you can explain what changed"
   },
   "plugins": [
     {
