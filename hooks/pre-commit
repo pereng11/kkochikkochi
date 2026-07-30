@@ -16,42 +16,73 @@ if [ -x "$CHAINED" ]; then
   "$CHAINED" "$@" || exit $?
 fi
 
-# ── 2. 에이전트가 만든 커밋인가 (D33) ─────────────────────────────
+# ── 2. 병합 충돌 해소 · cherry-pick · revert · rebase 진행 중이면 통과 ──
+# 이런 커밋은 이번 세션에 새로 작성된 코드가 아니라 다른 브랜치의 코드를
+# 그대로 스테이징에 올린다. 퀴즈 대상이 아니다. (v1의 pending-set.sh 가
+# 하던 체크. --git-path 는 워크트리별 위치도 올바르게 풀어준다.)
+for marker_name in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply; do
+  [ -e "$(git rev-parse --git-path "$marker_name")" ] && exit 0
+done
+
+# ── 3. 에이전트가 만든 커밋인가 (D33) ─────────────────────────────
 agent_signal=""
 
 # 1차: 핸드셰이크. 변수 이름에 의존하지 않아 버전 변경에 강하다. (D34)
 marker="$QDIR/agent-session"
 if [ -f "$marker" ]; then
   now=$(date +%s)
-  mtime=$(stat -f %m "$marker" 2>/dev/null || stat -c %Y "$marker" 2>/dev/null || echo 0)
-  if [ "$((now - mtime))" -le "$FRESH_SECS" ]; then
-    agent_signal="handshake:$(head -1 "$marker" 2>/dev/null)"
+  # GNU 는 -f 를 --file-system 으로 해석해 종료코드 0으로 헛값을 낸다. GNU
+  # 형식을 먼저 시도해야 그 헛값이 아니라 진짜 실패로 폴백을 탄다.
+  mtime=$(stat -c %Y "$marker" 2>/dev/null || stat -f %m "$marker" 2>/dev/null || echo 0)
+  case "$mtime" in '' | *[!0-9]*) mtime=0 ;; esac
+  age=$((now - mtime))
+  # 미래 시각(시계 오차·NFS)이면 age 가 음수다 — 그것도 "신선함"이 아니다.
+  if [ "$age" -ge 0 ] && [ "$age" -le "$FRESH_SECS" ]; then
+    agent_signal="handshake:$(head -n 1 "$marker" 2>/dev/null)"
   fi
 fi
 
-# 2차: 직접 관찰한 환경변수만. 추측으로 채우지 않는다. (D34)
+# 2차: 음성 신호. 실제 터미널이 붙어 있으면 사람이 지금 직접 조작하고 있다는
+# 뜻이므로, 남아 있는 환경변수(3차)보다 이 신호가 우선한다. git 은 pre-commit
+# 훅의 표준입력(fd 0)만 /dev/null 로 바꿔치므로 fd 0 이 아니라 fd 1/2 를 본다.
+if [ -z "$agent_signal" ] && { [ -t 1 ] || [ -t 2 ]; }; then
+  exit 0
+fi
+
+# 3차: 직접 관찰한 환경변수만. 추측으로 채우지 않는다. (D34)
 if [ -z "$agent_signal" ]; then
   if [ -n "${CLAUDECODE:-}" ] || [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
     agent_signal="env:claude-code"
   fi
 fi
 
-# 3차: 음성 신호. TTY 가 있으면 사람이 터미널에 있다.
-if [ -z "$agent_signal" ] && [ -t 0 ]; then
-  exit 0
-fi
-
 # 애매하면 통과 (D35)
 [ -n "$agent_signal" ] || exit 0
 
-# ── 3. 커밋될 내용 = git diff --cached ────────────────────────────
-pending="$(git -c core.quotePath=false diff --cached --raw --abbrev=40 --no-renames \
-           | awk -F'\t' '{ split($1, f, " "); print f[4] "\t" $2 }')"
+# ── 4. 커밋될 내용 = git diff --cached ────────────────────────────
+# -z 로 받아 NUL 로만 구분한다. quotePath=false 는 0x80 이상 바이트의 8진
+# 이스케이프만 풀어줄 뿐, 큰따옴표·역슬래시·탭은 여전히 C-quote 하므로 그
+# 플래그로는 못 막는다 — -z 는 애초에 아무것도 따옴표로 감싸지 않는다.
+# 쉘 변수·here-doc은 NUL을 담지 못하므로 tr로 개행으로 바꾸고, meta 줄과
+# path 줄을 번갈아 오는 두 줄 한 쌍으로 짝짓는다. (남는 한계: 경로 자체에
+# 진짜 개행 바이트가 들어 있으면 이 쌍짓기가 깨진다 — 개행으로 줄을 나누는
+# 이상 셸에서 피할 수 없고, 이전 구현도 이미 그 한계를 안고 있었다.)
+pending="$(git -c core.quotePath=false diff --cached --raw -z --abbrev=40 --no-renames \
+           | tr '\0' '\n' \
+           | awk 'NR % 2 { split($0, f, " "); print f[4]; next } { print }')"
 [ -n "$pending" ] || exit 0
 
 covered="$QDIR/covered.tsv"
 missing=""
-while IFS="$(printf '\t')" read -r sha path; do
+i=0
+sha=""
+while IFS= read -r line; do
+  i=$((i + 1))
+  if [ $((i % 2)) -eq 1 ]; then
+    sha="$line"
+    continue
+  fi
+  path="$line"
   [ -n "$sha" ] || continue
   if [ -r "$covered" ] && awk -F'\t' -v s="$sha" -v p="$path" \
        '$1 == s && $2 == p { found = 1; exit } END { exit !found }' "$covered"; then
