@@ -81,6 +81,18 @@ stub_covered_line() {  # $1 = 경로
   printf '%s\t%s\t%s\n' "$(git hash-object -- "$1")" "$1" "p-stub" >> "$(qdir)/covered.tsv"
 }
 
+# ⚠ 이것은 hooks/pre-commit 이 아니다. 훅 없이 pending.sh 만 보는 테스트용으로
+# 원장에 한 줄을 손으로 박아 넣는 스텁이며, SHA 를 **워크트리 파일**에서
+# 계산한다. stub_covered_line 과 같은 주의가 그대로 적용된다 — 훅이 실제로
+# 그런 줄을 만들어내는가를 주장하려면 진짜 훅을 태워야 한다
+# (tests/pre-commit.bats 의 "서브에이전트 마커면 막지 않고 원장에 적는다").
+stub_ledger_line() {  # $1 = 경로, $2 = agent_id, $3 = agent_type
+  mkdir -p "$(qdir)"
+  printf '%s\t%s\t%s\t%s\t%s\n' \
+    "$(git hash-object -- "$1")" "$1" "$2" "${3:-general-purpose}" \
+    "2026-07-30T00:00:00Z" >> "$(qdir)/ledger.tsv"
+}
+
 # 진짜 record-pass.sh 를 통과 기록으로 태운다 (왕복 주장은 이것만 쓴다).
 record_pass() {
   printf '%s' '{"questions":[{"axis":"facts","q":"무엇이 바뀌었나?","evidence":"x:1","format":"choice","answer":"A","correct":"A","attempts":1,"gave_up":false}]}' \

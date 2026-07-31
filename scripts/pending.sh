@@ -34,6 +34,74 @@ PENDING_FRESH_SECS=900
 git_common_dir="$(git rev-parse --git-common-dir 2>/dev/null)" || die "git 저장소가 아닙니다"
 pending_file="$git_common_dir/quiz-gate/pending"
 
+qdir="$git_common_dir/quiz-gate"
+covered="$qdir/covered.tsv"
+ledger="$qdir/ledger.tsv"
+
+MODE="current"
+BUNDLE_ID=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --bundle)         MODE="bundle"; BUNDLE_ID="${2:-}"; shift ;;
+    --all-unverified) MODE="all" ;;
+    *) die "알 수 없는 인자: $1 (사용법: pending.sh [--bundle <agent_id> | --all-unverified])" ;;
+  esac
+  shift
+done
+
+[ "$MODE" != "bundle" ] || [ -n "$BUNDLE_ID" ] || die "--bundle 에 agent_id 가 필요합니다"
+
+# 원장에서 미검증 (blob_sha, path) 를 뽑는다. covered.tsv 와의 차집합이며,
+# 같은 (sha, path) 가 여러 줄에 있어도 한 번만 낸다.
+#
+# -v 는 값에 이스케이프 처리를 한다 (back\slash.ts 의 \s 가 사라진다).
+# agent_id 는 정규화된 문자열이라 안전하지만, 경로는 ENVIRON 을 거치는
+# covered 쪽 비교와 철자가 어긋나지 않도록 원문 그대로 다룬다.
+#
+# 두 파일을 가르는 데 흔한 `FNR == NR` 트릭을 쓰지 않는다: covered.tsv 가
+# 아직 없어 0바이트로 부트스트랩된 첫 실행에서는 NR 이 첫 파일 동안 전혀
+# 늘지 않아, 두 번째 파일(ledger)의 첫 줄에서도 FNR==NR(둘 다 1)이 되어
+# ledger 전체가 covered 로 오분류된다(실측). 대신 covered 경로를
+# ENVIRON 으로 넘겨 FILENAME 과 비교한다 — 몇 줄짜리인지와 무관하다.
+ledger_unverified() {  # $1 = agent_id 또는 빈 문자열(전체)
+  [ -r "$ledger" ] || return 1
+  KK_FILTER="$1" KK_COVERED="$covered" awk -F'\t' '
+    FILENAME == ENVIRON["KK_COVERED"] { if (NF >= 2) covered[$1 FS $2] = 1; next }
+    {
+      if (NF != 5) { bad = 1; exit }
+      if (length($1) != 40 || $1 ~ /[^0-9a-f]/ || $2 == "") { bad = 1; exit }
+      want = ENVIRON["KK_FILTER"]
+      if (want != "" && $3 != want) next
+      key = $1 FS $2
+      if (key in covered) next
+      if (key in seen) next
+      seen[key] = 1
+      print $1 "\t" $2
+    }
+    END { if (bad) exit 1 }
+  ' "${covered:-/dev/null}" "$ledger" 2>/dev/null
+}
+
+if [ "$MODE" != "current" ]; then
+  filter=""
+  [ "$MODE" = "bundle" ] && filter="$BUNDLE_ID"
+  # covered 가 없을 때 awk 가 죽지 않게 먼저 만든다. current 모드는 절대
+  # 여기를 지나지 않으므로 인자 없는 pending.sh 는 covered.tsv 에 손대지
+  # 않는다(실측: qdir 가 아직 없는 새 레포에서 무조건 실행하면 "No such
+  # file or directory" 가 새어나가고, 아무 통과도 기록하지 않았는데
+  # covered.tsv 가 빈 파일로 생겨버린다). `{ } 2>/dev/null` 로 그룹째
+  # 감싸야 한다 — `: > "$covered" 2>/dev/null` 처럼 fd1 리다이렉트만 따로
+  # 실패하면 bash 는 그 실패를 fd2 리다이렉트가 걸리기 **전에** 보고해
+  # 억제되지 않는다.
+  [ -e "$covered" ] || { : > "$covered"; } 2>/dev/null || covered=/dev/null
+  if ! out="$(ledger_unverified "$filter")"; then
+    die "원장이 손상됐습니다 ($ledger)"
+  fi
+  [ -n "$out" ] || die "검증할 것이 없습니다 (근거: 원장)"
+  printf '%s\n' "$out"
+  exit 0
+fi
+
 # ① 훅이 발표한 답이 있고 신선하면 그것을 쓴다.
 #
 # 이것이 필요한 이유: git 은 `-a` 나 `-- <path>` 커밋에서 훅에게 **임시

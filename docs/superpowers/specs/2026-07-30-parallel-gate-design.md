@@ -111,7 +111,7 @@ SDK 타입 정의가 같은 것을 말한다.
 
 ```
 <common-dir>/quiz-gate/
-  ledger.tsv        blob_sha  path  agent_id  agent_type  commit_sha  at
+  ledger.tsv        blob_sha  path  agent_id  agent_type  at
   covered.tsv       (현행 유지) blob_sha  path  pass_id
   pending           (현행 유지) 단일 에이전트 경로 전용
   marker/main       agent_id 없는 Bash 호출
@@ -120,6 +120,8 @@ SDK 타입 정의가 같은 것을 말한다.
   passes/<pass_id>.json
   defer             있으면 유예 모드
 ```
+
+`commit_sha` 는 담지 않는다. `pre-commit` 은 커밋이 만들어지기 **전**에 도므로 그 값을 모른다. 필요도 없다 — `pre-push` 는 push 범위의 `git diff --raw` 를 `covered.tsv` 와 직접 대조하고, 원장은 번들 묶기와 `Stop` 판정에만 쓰인다.
 
 ### 마커를 `agent_id` 별로 쪼갠다
 

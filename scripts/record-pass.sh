@@ -52,10 +52,10 @@ qdir="$git_common_dir/quiz-gate"
 pending_file="$qdir/pending"
 
 # 대상 결정은 scripts/pending.sh 하나에만 있다 — 스킬(SKILL.md §1)도 같은
-# 스크립트를 부른다. 규칙을 여기 한 벌 더 두면 반드시 한쪽이 낡고, 그러면
-# 사용자가 A 를 풀었는데 B 가 검증된 것으로 기록된다. (D45)
+# 스크립트를 같은 인자로 부른다. 규칙을 여기 한 벌 더 두면 반드시 한쪽이
+# 낡고, 그러면 사용자가 A 를 풀었는데 B 가 검증된 것으로 기록된다. (D45)
 # 사유 메시지는 pending.sh 가 이미 stderr 에 냈으므로 그대로 물려받는다.
-pending="$(bash "$SCRIPT_DIR/pending.sh")" || exit 1
+pending="$(bash "$SCRIPT_DIR/pending.sh" "$@")" || exit 1
 
 mkdir -p "$qdir/passes" || die "상태 디렉터리를 만들 수 없습니다"
 
