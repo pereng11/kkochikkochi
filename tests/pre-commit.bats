@@ -502,3 +502,55 @@ teardown() { teardown_repo; }
   [ "$status" -eq 0 ]
   [[ "$output" == *"jq"* ]]
 }
+
+# ── 서브에이전트 경로 — 막지 않고 원장에 적는다 ──
+
+@test "서브에이전트 마커면 막지 않고 원장에 적는다" {
+  install_hook
+  printf 'C1\n' > c.ts; git add c.ts
+  stamp claude-code aaa11 general-purpose
+  run git commit -qm "from subagent"
+  [ "$status" -eq 0 ]
+  [ -s "$(qdir)/ledger.tsv" ]
+  run cat "$(qdir)/ledger.tsv"
+  [[ "$output" == *"c.ts"* ]]
+  [[ "$output" == *"aaa11"* ]]
+  [[ "$output" == *"general-purpose"* ]]
+}
+
+@test "서브에이전트 경로는 pending 을 쓰지 않는다" {
+  install_hook
+  printf 'C1\n' > c.ts; git add c.ts
+  stamp claude-code aaa11 general-purpose
+  git commit -qm "from subagent"
+  [ ! -s "$(qdir)/pending" ]
+}
+
+@test "메인 스레드 마커면 지금처럼 막는다" {
+  install_hook
+  printf 'C1\n' > c.ts; git add c.ts
+  stamp claude-code
+  run git commit -qm "from main"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"검증되지 않은 변경"* ]]
+  [ ! -e "$(qdir)/ledger.tsv" ]
+}
+
+@test "마커가 섞여 있으면 통과 쪽으로 간다 (오판을 안전한 방향으로)" {
+  install_hook
+  printf 'C1\n' > c.ts; git add c.ts
+  stamp claude-code
+  stamp claude-code aaa11 general-purpose
+  run git commit -qm "mixed markers"
+  [ "$status" -eq 0 ]
+}
+
+@test "이미 검증된 변경은 원장에 적지 않는다" {
+  install_hook
+  printf 'C1\n' > c.ts; git add c.ts
+  stub_covered_line c.ts
+  stamp claude-code aaa11 general-purpose
+  run git commit -qm "already covered"
+  [ "$status" -eq 0 ]
+  [ ! -e "$(qdir)/ledger.tsv" ]
+}

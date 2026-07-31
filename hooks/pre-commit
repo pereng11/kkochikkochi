@@ -104,8 +104,6 @@ for marker in "$QDIR/marker"/*; do
   [ -n "$agent_signal" ] || agent_signal="handshake:$this_agent"
   if [ -n "$this_id" ] && [ -z "$marker_agent_id" ]; then
     marker_agent_id="$this_id"
-    # shellcheck disable=SC2034  # 이 태스크는 아직 분기하지 않는다. 다음
-    # 태스크의 분기 규칙이 이 값을 읽는다.
     marker_agent_type="$this_type"
     agent_signal="handshake:$this_agent/$this_id"
   fi
@@ -194,15 +192,41 @@ PENDING
 [ -n "$missing" ] || exit 0
 
 # jq 가 없으면 통과시킨다. 이 훅 자체는 jq 를 쓰지 않지만 통과를 기록하는
-# record-pass.sh 는 jq 없이 한 줄도 쓰지 못한다 — 여기서 막으면 퀴즈를
-# 통과할 방법이 없는 채로 커밋이 영구히 막힌다. 이해와 무관한 이유로 커밋을
-# 영구히 막는 것이 이 프로젝트에서 가장 하지 말아야 할 일이다. 설치기가
-# 애초에 jq 없는 환경에서 설치를 거부하므로(D42) 여긴 마지막 방어선이다.
+# record-pass.sh 는 jq 없이 한 줄도 쓰지 못한다 — 여기서 막으면(또는 원장에
+# 적어 Stop 이 막으면) 퀴즈를 통과할 방법이 없는 채로 커밋이 영구히 막힌다.
+# 이해와 무관한 이유로 커밋을 영구히 막는 것이 이 프로젝트에서 가장 하지
+# 말아야 할 일이다. 설치기가 애초에 jq 없는 환경에서 설치를 거부하므로(D42)
+# 여긴 마지막 방어선이다.
 if ! command -v jq >/dev/null 2>&1; then
   echo "kkochikkochi: 경고 — jq 가 없어 퀴즈를 통과시킬 수 없으므로 이 커밋을 검증 없이 통과시킵니다 (jq 를 설치하세요)" >&2
   exit 0
 fi
 
+# ── 5. 서브에이전트 경로 — 막지 않고 원장에 적는다 ────────────────
+#
+# 서브에이전트는 사람에게 물을 수 없다. 여기서 막으면 통과할 방법이 없다.
+# 그래서 적어 두고 통과시키고, PostToolUse(Task)·Stop·pre-push 가 검증을
+# 강제한다.
+#
+# 마커가 섞여 있을 때 이 분기를 타는 이유(오판을 "막지 않는" 쪽으로만
+# 흐르게 한다)는 설계 문서 §4 에 있다. 반대 방향으로 틀리면 서브에이전트가
+# 갇히고, 이 방향으로 틀리면 검증 시점만 뒤로 밀린다.
+if [ -n "$marker_agent_id" ]; then
+  at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if ! { mkdir -p "$QDIR" 2>/dev/null && while IFS='	' read -r sha path; do
+      [ -n "$sha" ] || continue
+      printf '%s\t%s\t%s\t%s\t%s\n' \
+        "$sha" "$path" "$marker_agent_id" "$marker_agent_type" "$at"
+    done <<LEDGER >> "$QDIR/ledger.tsv"
+$missing_pairs
+LEDGER
+  }; then
+    echo "kkochikkochi: 경고 — $QDIR/ledger.tsv 를 쓸 수 없어 이 커밋은 검증 없이 통과합니다" >&2
+  fi
+  exit 0
+fi
+
+# ── 6. 메인 스레드 경로 — 지금처럼 막는다 ─────────────────────────
 # 훅이 계산한 답을 파일로 남긴다. 실패해도 커밋 차단 자체는 그대로 진행하지만,
 # **조용히 넘어가지는 않는다** — 이 파일이 없으면 스킬과 record-pass.sh 가
 # git diff --cached 로 폴백하고, `-a` 나 `-- <path>` 커밋에서는 그 계산이 훅과
