@@ -53,12 +53,18 @@ pending_sh() { bash "$PLUGIN_ROOT/scripts/pending.sh" "$@"; }
   [ ! -e "$(qdir)/covered.tsv" ]
 }
 
-@test "원장에 손상된 줄이 있으면 거부한다" {
+@test "원장에 손상된 줄이 있으면 거부한다 (2, 1 이 아니다)" {
+  # 종료 코드는 1(미검증 없음)이 아니라 2(판정 불가)다 — "원장이 없다"와
+  # "원장이 있는데 못 읽는다"는 서로 다른 사유이고, 두 사유가 같은 코드를
+  # 쓰면 stop-gate.sh 같은 호출자가 종료 코드만으로 못 가른다(review critical
+  # finding 1 이 재발한 지점 — 자세한 내막은 이 파일 끝의 "종료 코드 계약"
+  # 절 참고).
   mkdir -p "$(qdir)"
   printf 'not-a-sha\tc.ts\taaa11\tgeneral-purpose\t2026-07-30T00:00:00Z\n' \
     > "$(qdir)/ledger.tsv"
   run pending_sh --all-unverified
-  [ "$status" -eq 1 ]
+  [ "$status" -eq 2 ]
+  [ "$status" -ne 1 ]
   [[ "$output" == *"손상"* ]]
 }
 
@@ -84,4 +90,31 @@ pending_sh() { bash "$PLUGIN_ROOT/scripts/pending.sh" "$@"; }
 
   run bash "$PLUGIN_ROOT/scripts/pending.sh" --bundle aaa11
   [ "$status" -eq 1 ]
+}
+
+# ── 종료 코드 계약: 0 = 목록 / 1 = 미검증 없음 / 2 = 판정 불가 (원장 모드) ──
+#
+# review: stop-gate.sh 는 이제 이 세 코드만 보고 분기한다(prose 매칭 아님).
+# 이 절은 그 계약을 원장 모드(--bundle/--all-unverified)에서 코드
+# 하나하나 못박는다 — current 모드 쪽은 tests/pending.bats 에 있다.
+
+@test "종료 코드 계약(원장) — 미검증 목록이 있으면 0" {
+  printf 'C1\n' > c.ts
+  stub_ledger_line c.ts aaa11
+  run pending_sh --all-unverified
+  [ "$status" -eq 0 ]
+}
+
+@test "종료 코드 계약(원장) — 원장이 없으면 1" {
+  run pending_sh --all-unverified
+  [ "$status" -eq 1 ]
+}
+
+@test "종료 코드 계약(원장) — 원장 형식이 깨지면 2, 1 이 아니다" {
+  mkdir -p "$(qdir)"
+  printf 'not-a-sha\tc.ts\taaa11\tgeneral-purpose\t2026-07-30T00:00:00Z\n' \
+    > "$(qdir)/ledger.tsv"
+  run pending_sh --all-unverified
+  [ "$status" -eq 2 ]
+  [ "$status" -ne 1 ]
 }

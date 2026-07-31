@@ -122,3 +122,39 @@ stop_run() {  # $1 = stop_hook_active
   [ "$(printf '%s' "$output" | jq -r '.decision')" = "block" ]
   [ -e "$(qdir)/defer" ]
 }
+
+# ── 판정은 종료 코드로 말한다, stderr 문구로 말하지 않는다 ──
+#
+# review important finding (round 3): stop-gate.sh 가 pending.sh 의 stderr
+# 에 있는 "손상" 문자열을 매칭해서 판정 불가를 골라내던 시절, 리뷰는
+# pending.sh 의 그 die 메시지 **문구만**(로직은 그대로) 바꿔서 재현했다 —
+# 아무 것도 논리적으로는 안 고쳤는데 stop-gate.sh 가 진짜 손상을 "미검증
+# 없음"으로 오판하고 defer 를 지웠다. 이제 pending.sh 는 판정 불가를 종료
+# 코드 2 로 낸다(스크립트 헤더의 0/1/2 계약). 아래 테스트는 리뷰가 실제로
+# 썼던 재현 방법 그대로 — pending.sh 사본의 메시지 문구만 바꾸고 — 여전히
+# block 되는지 확인한다. 이 테스트가 깨진다면 누군가 다시 문자열 매칭으로
+# 되돌렸다는 뜻이다.
+@test "pending.sh 의 메시지 문구만 바뀌어도 rc=2 인 한 여전히 block 한다" {
+  printf 'C1\n' > good.ts
+  stub_ledger_line good.ts aaa11
+  printf 'not-a-sha\tbad.ts\tbbb22\tgeneral-purpose\t2026-07-30T00:00:00Z\n' \
+    >> "$(qdir)/ledger.tsv"
+
+  reworded_dir="$BATS_TEST_TMPDIR/reworded-scripts"
+  mkdir -p "$reworded_dir"
+  # "손상" 이 들어간 die 메시지의 문구만 영어로 바꾼다 — exit 코드(2)는
+  # 그대로다. stop-gate.sh 는 이제 이 문구를 보지 않으므로 영향이 없어야
+  # 한다.
+  sed 's/원장이 손상됐습니다/Ledger format error, please investigate/' \
+    "$PLUGIN_ROOT/scripts/pending.sh" > "$reworded_dir/pending.sh"
+  cp "$PLUGIN_ROOT/scripts/stop-gate.sh" "$reworded_dir/stop-gate.sh"
+  chmod +x "$reworded_dir/pending.sh" "$reworded_dir/stop-gate.sh"
+
+  mkdir -p "$(qdir)"; : > "$(qdir)/defer"
+  out="$(jq -n --arg cwd "$PWD" \
+      '{hook_event_name:"Stop", session_id:"sess-1", cwd:$cwd, stop_hook_active:false}' \
+    | bash "$reworded_dir/stop-gate.sh")"
+  [ "$(printf '%s' "$out" | jq -r '.decision')" = "block" ]
+  [[ "$(printf '%s' "$out" | jq -r '.reason')" == *"Ledger format error"* ]]
+  [ -e "$(qdir)/defer" ]
+}
