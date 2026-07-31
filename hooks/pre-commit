@@ -215,6 +215,21 @@ if [ -n "$marker_agent_id" ]; then
   at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   if ! { mkdir -p "$QDIR" 2>/dev/null && while IFS='	' read -r sha path; do
       [ -n "$sha" ] || continue
+      case "$path" in
+        *'	'*)
+          # 원장(ledger.tsv)도 covered.tsv 와 같은 탭 구분 형식이라, 경로에
+          # 진짜 탭 바이트가 있으면 그 한 줄 안에서 필드 수가 늘어나
+          # ledger_unverified(scripts/pending.sh)의 NF 검사가 이 줄 하나
+          # 때문에 원장 전체를 "손상"으로 판정해버린다 — 실측: 이 줄 하나가
+          # 같은 커밋에 함께 적히는 다른 정상 경로의 미검증 상태까지
+          # 가렸다(critical finding 1). 이 경로 하나만 원장 기록에서 빼고
+          # 경고하면, 같은 커밋의 나머지 정상 경로는 그대로 추적된다.
+          # README 한계 표의 covered.tsv 항목과 같은 한계이자 같은 처방이다
+          # — 갇히지는 않는다.
+          echo "kkochikkochi: 경고 — 경로에 탭 문자가 있어 원장에 기록할 수 없습니다(탭 구분 형식의 한계): $path — 이 파일은 이번 커밋의 검증 추적에서 빠집니다" >&2
+          continue
+          ;;
+      esac
       printf '%s\t%s\t%s\t%s\t%s\n' \
         "$sha" "$path" "$marker_agent_id" "$marker_agent_type" "$at"
     done <<LEDGER >> "$QDIR/ledger.tsv"

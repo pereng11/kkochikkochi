@@ -75,3 +75,50 @@ stop_run() {  # $1 = stop_hook_active
   [ "$status" -eq 0 ]
   [ -z "$output" ]
 }
+
+# ── 원장이 있는데 못 읽는 경우는 "미검증 없음"과 다르게 취급한다 ──
+#
+# review critical finding 1: 예전에는 pending.sh 가 무슨 이유로 실패하든
+# (원장이 없어서 / 원장이 있는데 형식이 깨져서) 전부 "미검증 없음"으로
+# 뭉뚱그려 defer 를 지우고 조용히 통과시켰다. 그러면 나쁜 줄 하나가 같은
+# 원장에 있는 **다른 정상 파일의 미검증 상태까지** 가려버린다. 아래
+# 세 테스트는 그 세 가지 재현(형식이 깨진 줄 / 중간에 끊긴 append / 권한
+# 문제)이 전부 block 을 내고 defer 를 지우지 않는지 확인한다.
+
+@test "원장에 형식이 깨진 줄이 있으면 조용히 넘어가지 않고 defer 도 지키지 않는다" {
+  printf 'C1\n' > good.ts
+  stub_ledger_line good.ts aaa11
+  # good.ts 는 정상적으로 미검증인데, 같은 원장에 형식이 깨진 줄이 하나
+  # 더 있다 (예: 탭 경로가 잘못 기록된 경우를 흉내).
+  printf 'not-a-sha\tbad.ts\tbbb22\tgeneral-purpose\t2026-07-30T00:00:00Z\n' \
+    >> "$(qdir)/ledger.tsv"
+  mkdir -p "$(qdir)"; : > "$(qdir)/defer"
+  run stop_run
+  [ "$status" -eq 0 ]
+  [ -n "$output" ]                                          # 조용히 넘어가지 않는다
+  [ "$(printf '%s' "$output" | jq -r '.decision')" = "block" ]
+  [[ "$(printf '%s' "$output" | jq -r '.reason')" == *"손상"* ]]
+  [ -e "$(qdir)/defer" ]                                    # 유예를 지우지 않는다
+}
+
+@test "원장의 마지막 줄이 중간에 끊겨도 조용히 넘어가지 않는다" {
+  printf 'C1\n' > good.ts
+  stub_ledger_line good.ts aaa11
+  # append 도중 끊긴 것을 흉내: 개행 없이 필드가 모자란 조각만 덧붙인다.
+  printf 'deadbeef' >> "$(qdir)/ledger.tsv"
+  mkdir -p "$(qdir)"; : > "$(qdir)/defer"
+  run stop_run
+  [ "$(printf '%s' "$output" | jq -r '.decision')" = "block" ]
+  [ -e "$(qdir)/defer" ]
+}
+
+@test "원장을 권한 때문에 못 읽어도 조용히 넘어가지 않는다" {
+  printf 'C1\n' > good.ts
+  stub_ledger_line good.ts aaa11
+  mkdir -p "$(qdir)"; : > "$(qdir)/defer"
+  chmod 000 "$(qdir)/ledger.tsv"
+  run stop_run
+  chmod 644 "$(qdir)/ledger.tsv"   # teardown_repo 의 rm -rf 가 확실히 지울 수 있게 되돌린다
+  [ "$(printf '%s' "$output" | jq -r '.decision')" = "block" ]
+  [ -e "$(qdir)/defer" ]
+}

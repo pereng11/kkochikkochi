@@ -41,6 +41,18 @@ pending_sh() { bash "$PLUGIN_ROOT/scripts/pending.sh" "$@"; }
   [ "$status" -eq 1 ]
 }
 
+@test "원장이 없으면 covered.tsv 부트스트랩도 생기지 않는다 (review important 3 재발 방지)" {
+  # Task 4 는 covered.tsv 부트스트랩을 --bundle/--all-unverified 분기 안으로
+  # 옮겨서, qdir 조차 없는 새 레포에서 인자 없이 pending.sh 를 부르는 정상
+  # 경로가 covered.tsv 를 생성하는 부작용을 막았다. 이 태스크에서 원장
+  # 존재/읽기 검사를 그 부트스트랩보다 **뒤에** 두면, 원장이 없는 (그리고
+  # stop-gate.sh 가 매 턴 타는) 흔한 경로에서 다시 그 부작용이 살아난다 —
+  # 이번엔 "드문 사고"가 아니라 "항상 일어나는 일"이 되어 더 나쁘다.
+  run pending_sh --all-unverified
+  [ "$status" -eq 1 ]
+  [ ! -e "$(qdir)/covered.tsv" ]
+}
+
 @test "원장에 손상된 줄이 있으면 거부한다" {
   mkdir -p "$(qdir)"
   printf 'not-a-sha\tc.ts\taaa11\tgeneral-purpose\t2026-07-30T00:00:00Z\n' \

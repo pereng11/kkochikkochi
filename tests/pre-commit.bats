@@ -554,3 +554,60 @@ teardown() { teardown_repo; }
   [ "$status" -eq 0 ]
   [ ! -e "$(qdir)/ledger.tsv" ]
 }
+
+# ── 원장은 탭 구분이다 — 경로에 진짜 탭이 있으면 그 형식을 못 담는다 ──
+
+@test "경로에 탭이 있으면 그 파일만 빼고 경고하며, 나머지 파일은 원장에 정상 기록된다" {
+  # review critical finding 1 의 재현: 원장(ledger.tsv)도 covered.tsv 와 같은
+  # 탭 구분 TSV 다. 경로에 진짜 탭 바이트가 있으면 그 한 줄의 필드 수가
+  # 5개를 넘어가고(NF=6), pending.sh 의 ledger_unverified 는 첫 번째로
+  # 만나는 형식 오류에서 즉시 멈춘다 — 그 탓에 이 한 줄이 **같은 원장에
+  # 있는 다른 모든 파일의 미검증 상태까지** "손상"으로 가려버렸다(실측).
+  # 그래서 훅은 이 경로 하나만 원장에 적지 않고 경고해야 하고, 같은 커밋의
+  # 나머지 정상 경로(good.ts)는 원장에 온전히 남아야 한다.
+  install_hook
+  printf 'T\n' > "$(printf 'ta\tb.ts')"
+  printf 'G\n' > good.ts
+  git add -A
+  stamp claude-code aaa11 general-purpose
+  run git commit -qm "tab path"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"경고"* ]]
+  [[ "$output" == *"탭"* ]]
+
+  # good.ts 는 온전한 5필드 줄로 남아야 한다.
+  run awk -F'\t' '{print NF}' "$(qdir)/ledger.tsv"
+  [ "$output" = "5" ]
+  run cat "$(qdir)/ledger.tsv"
+  [[ "$output" == *"good.ts"* ]]
+
+  # 원장이 그 탭 경로 때문에 통째로 "손상" 판정되지 않았다는 것을 pending.sh
+  # 로 직접 확인한다 — good.ts 가 정상적으로 미검증 목록에 나와야 한다.
+  run bash "$PLUGIN_ROOT/scripts/pending.sh" --all-unverified
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"good.ts"* ]]
+}
+
+@test "경로에 공백이 있어도 원장 왕복이 깨지지 않는다 (LEDGER 히어독의 IFS 탭 회귀)" {
+  # <<LEDGER 히어독을 읽는 while 루프는 IFS 를 리터럴 탭 한 글자로 맞춰야
+  # 한다. 공백으로 잘못 바뀌면(예: IFS=' ') "path with space.ts" 처럼 경로
+  # 자체에 공백이 있는 흔한 케이스에서 read 가 그 공백을 필드 구분자로
+  # 오인해 sha/path 를 잘못 쪼갠다 — NF 가 5가 아니게 되어 원장이 깨진다.
+  # 이 테스트는 IFS 가 탭일 때만 통과해야 한다(hooks/pre-commit 의
+  # IFS='<literal tab>' 를 IFS=' ' 로 바꾸면 반드시 실패해야 한다).
+  install_hook
+  printf 'S\n' > "space file.ts"
+  git add -- "space file.ts"
+  stamp claude-code aaa11 general-purpose
+  run git commit -qm "space path"
+  [ "$status" -eq 0 ]
+
+  run awk -F'\t' '{print NF}' "$(qdir)/ledger.tsv"
+  [ "$output" = "5" ]
+  run cat "$(qdir)/ledger.tsv"
+  [[ "$output" == *"space file.ts"* ]]
+
+  run bash "$PLUGIN_ROOT/scripts/pending.sh" --all-unverified
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"space file.ts"* ]]
+}
