@@ -80,6 +80,29 @@ hook_command() {  # $1 = 매니페스트 경로
   [[ "$codex" == *"codex"* ]]
 }
 
+@test "Claude Code 매니페스트의 새 훅 command 가 전부 실제로 실행된다" {
+  for path in '.hooks.Stop[0].hooks[0].command' \
+              '.hooks.PostToolUse[0].hooks[0].command' \
+              '.hooks.SubagentStart[0].hooks[0].command' \
+              '.hooks.SubagentStop[0].hooks[0].command'; do
+    cmd="$(jq -r "$path" "$PLUGIN_ROOT/hooks/hooks.json")"
+    [ -n "$cmd" ] && [ "$cmd" != "null" ]
+    jq -n --arg cwd "$PWD" \
+      '{session_id:"sess-m", cwd:$cwd, agent_id:"aaa11", agent_type:"general-purpose"}' \
+      | env -u PLUGIN_ROOT CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" bash -c "$cmd"
+    [ "$?" -eq 0 ] || return 1
+  done
+}
+
+@test "Codex 매니페스트에는 서브에이전트 훅이 없다" {
+  # Codex 페이로드에는 agent_id 가 없어 마커가 항상 main 이 되고, pre-commit 이
+  # 늘 막는다 — 현행 동작 그대로다. 훅을 등록하면 돌지 않는 코드만 늘어난다.
+  for key in Stop PostToolUse SubagentStart SubagentStop; do
+    run jq -e --arg k "$key" '.hooks | has($k)' "$PLUGIN_ROOT/hooks.json"
+    [ "$status" -ne 0 ]
+  done
+}
+
 @test "여섯 개 매니페스트가 전부 올바른 JSON 이다" {
   for f in hooks/hooks.json hooks.json \
            .claude-plugin/plugin.json .claude-plugin/marketplace.json \

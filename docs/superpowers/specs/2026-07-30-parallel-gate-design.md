@@ -78,7 +78,9 @@ SDK 타입 정의가 같은 것을 말한다.
 
 가장 가까운 자리가 `PostToolUse` + matcher `Task` 다. 서브에이전트가 끝나 결과가 부모로 돌아오는 순간 **부모 문맥에서** 발동하므로, 거기서는 `AskUserQuestion` 을 쓸 수 있다.
 
-밀어 넣는 방법은 `hookSpecificOutput.additionalContext` 다. 훅이 "이 번들에 미검증 변경이 있다, kkochikkochi 스킬을 실행해 검증하라"와 `agent_id` 를 넘긴다. 훅이 직접 퀴즈를 내지 않는다 — 훅에는 사람에게 묻는 채널이 없고 `timeout` 이 걸려 있다(§6).
+밀어 넣는 방법은 `hookSpecificOutput.additionalContext` 다. **`PostToolUse(Task)` 페이로드에는 `agent_id` 가 없다** — SDK 정의가 "Present only when the hook fires from inside a Task-spawned sub-agent; absent on the main thread" 라고 못 박고 있고, 이 훅은 부모 문맥에서 돈다. 그래서 `SubagentStop` 이 `agents/<agent_id>` 에 봉인 표시를 남기고, `PostToolUse` 는 그 표시를 디스크에서 읽어 어느 번들을 검증해야 하는지 안다.
+
+`SubagentStop` 이 `PostToolUse(Task)` 보다 먼저 도는 것에 기대지만, 그것이 어긋나도 안전하다 — 봉인된 번들이 하나도 없으면 `PostToolUse` 는 원장 전체의 미검증으로 물러나 요구한다.
 
 ### `Stop` 훅과 무한 루프
 
