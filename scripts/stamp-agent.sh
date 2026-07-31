@@ -59,11 +59,26 @@ qdir="$(git rev-parse --git-common-dir)/quiz-gate"
 mkdir -p "$qdir" 2>/dev/null || exit 0
 
 session="unknown"
+agent_id=""
+agent_type=""
 if command -v jq >/dev/null 2>&1; then
   session="$(jq -r '.session_id // "unknown"' <<<"$payload" 2>/dev/null || echo unknown)"
+  agent_id="$(jq -r '.agent_id // ""' <<<"$payload" 2>/dev/null || echo "")"
+  agent_type="$(jq -r '.agent_type // ""' <<<"$payload" 2>/dev/null || echo "")"
 fi
 
-printf '%s/%s\n' "$AGENT" "$session" > "$qdir/agent-session" 2>/dev/null || exit 0
+# 마커 파일명은 agent_id 다. 페이로드에서 온 문자열이므로 경로로 쓰기 전에
+# 정규화한다 — `../` 가 들어오면 quiz-gate 밖에 파일을 쓰게 된다.
+# agent_id 가 없으면(메인 스레드) 이름은 main 이다.
+marker_name="main"
+if [ -n "$agent_id" ]; then
+  marker_name="$(printf '%s' "$agent_id" | tr -c 'A-Za-z0-9_-' '_' | cut -c1-64)"
+  [ -n "$marker_name" ] || marker_name="unknown-agent"
+fi
+
+mkdir -p "$qdir/marker" 2>/dev/null || exit 0
+printf '%s\t%s\t%s\t%s\n' "$AGENT" "$agent_id" "$agent_type" "$session" \
+  > "$qdir/marker/$marker_name" 2>/dev/null || exit 0
 
 # ── 건강검진 ─────────────────────────────────────────────────────
 # 게이트가 조용히 없는 상태를 막는다. 여기서 부정확해도 안전하다:

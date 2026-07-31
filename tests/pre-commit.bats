@@ -50,7 +50,7 @@ teardown() { teardown_repo; }
   [ "$status" -ne 0 ]              # 대조군: 신선하면 막힌다
   # FRESH_SECS(600초) 밖으로 넉넉히 민다. 창 값을 바꿀 때 이 숫자도 함께
   # 봐야 한다 — 창보다 짧게 밀면 "낡았다"를 검증하지 못하고 조용히 통과한다.
-  touch -t "$(date -v-30M '+%Y%m%d%H%M' 2>/dev/null || date -d '30 minutes ago' '+%Y%m%d%H%M')" "$(qdir)/agent-session"
+  touch -t "$(date -v-30M '+%Y%m%d%H%M' 2>/dev/null || date -d '30 minutes ago' '+%Y%m%d%H%M')" "$(qdir)/marker/main"
   run commit_as_human -m x
   [ "$status" -eq 0 ]              # 낡으면 (같은 스테이징으로) 통과한다
 }

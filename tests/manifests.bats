@@ -31,8 +31,8 @@ hook_command() {  # $1 = 매니페스트 경로
   cmd="$(hook_command "$PLUGIN_ROOT/hooks/hooks.json")"
   [ -n "$cmd" ] && [ "$cmd" != "null" ]
   payload | env -u PLUGIN_ROOT CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" bash -c "$cmd"
-  [ -f "$(qdir)/agent-session" ]
-  run cat "$(qdir)/agent-session"
+  [ -f "$(qdir)/marker/main" ]
+  run cat "$(qdir)/marker/main"
   [[ "$output" == *"claude-code"* ]]
   [[ "$output" == *"sess-manifest"* ]]
 }
@@ -41,8 +41,8 @@ hook_command() {  # $1 = 매니페스트 경로
   cmd="$(hook_command "$PLUGIN_ROOT/hooks.json")"
   [ -n "$cmd" ] && [ "$cmd" != "null" ]
   payload | env -u CLAUDE_PLUGIN_ROOT PLUGIN_ROOT="$PLUGIN_ROOT" bash -c "$cmd"
-  [ -f "$(qdir)/agent-session" ]
-  run cat "$(qdir)/agent-session"
+  [ -f "$(qdir)/marker/main" ]
+  run cat "$(qdir)/marker/main"
   [[ "$output" == *"codex"* ]]
   [[ "$output" == *"sess-manifest"* ]]
 }

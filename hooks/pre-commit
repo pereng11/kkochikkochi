@@ -76,19 +76,40 @@ fi
 agent_signal=""
 
 # 1차: 핸드셰이크. 변수 이름에 의존하지 않아 버전 변경에 강하다. (D34)
-marker="$QDIR/agent-session"
-if [ -f "$marker" ]; then
-  now=$(date +%s)
+#
+# 마커는 agent_id 별 파일이다. 단일 파일이던 시절에는 병렬 서브에이전트가
+# 서로를 덮어썼다 — 실측한 스탬프 간격이 0.14초다.
+#
+# `agent_id` 를 가진 신선한 마커가 하나라도 있으면 그것을 고른다. 왜
+# "하나라도"인지는 다음 태스크의 분기 규칙과 함께 봐야 한다: 오판을
+# "막지 않는" 쪽으로만 흐르게 하기 위해서다.
+now=$(date +%s)
+marker_agent_id=""
+marker_agent_type=""
+for marker in "$QDIR/marker"/*; do
+  [ -f "$marker" ] || continue
   # GNU 는 -f 를 --file-system 으로 해석해 종료코드 0으로 헛값을 낸다. GNU
   # 형식을 먼저 시도해야 그 헛값이 아니라 진짜 실패로 폴백을 탄다.
   mtime=$(stat -c %Y "$marker" 2>/dev/null || stat -f %m "$marker" 2>/dev/null || echo 0)
   case "$mtime" in '' | *[!0-9]*) mtime=0 ;; esac
   age=$((now - mtime))
   # 미래 시각(시계 오차·NFS)이면 age 가 음수다 — 그것도 "신선함"이 아니다.
-  if [ "$age" -ge 0 ] && [ "$age" -le "$FRESH_SECS" ]; then
-    agent_signal="handshake:$(head -n 1 "$marker" 2>/dev/null)"
+  [ "$age" -ge 0 ] && [ "$age" -le "$FRESH_SECS" ] || continue
+
+  line="$(head -n 1 "$marker" 2>/dev/null)"
+  this_agent="$(printf '%s' "$line" | cut -f1)"
+  this_id="$(printf '%s' "$line" | cut -f2)"
+  this_type="$(printf '%s' "$line" | cut -f3)"
+
+  [ -n "$agent_signal" ] || agent_signal="handshake:$this_agent"
+  if [ -n "$this_id" ] && [ -z "$marker_agent_id" ]; then
+    marker_agent_id="$this_id"
+    # shellcheck disable=SC2034  # 이 태스크는 아직 분기하지 않는다. 다음
+    # 태스크의 분기 규칙이 이 값을 읽는다.
+    marker_agent_type="$this_type"
+    agent_signal="handshake:$this_agent/$this_id"
   fi
-fi
+done
 
 # 2차: 직접 관찰한 환경변수만. 추측으로 채우지 않는다. (D34)
 if [ -z "$agent_signal" ]; then

@@ -55,9 +55,14 @@ install_hook() {
   chmod +x "$(hooksdir)/pre-commit"
 }
 
-stamp() {  # 핸드셰이크 마커를 신선하게 남긴다
-  mkdir -p "$(qdir)"
-  echo "${1:-test-agent}/sess-1" > "$(qdir)/agent-session"
+# 핸드셰이크 마커를 신선하게 남긴다.
+# 인자 없이 부르면 메인 스레드 마커, agent_id 를 주면 서브에이전트 마커다.
+stamp() {  # $1 = agent, $2 = agent_id, $3 = agent_type
+  local name="main"
+  [ -n "${2:-}" ] && name="$2"
+  mkdir -p "$(qdir)/marker"
+  printf '%s\t%s\t%s\t%s\n' \
+    "${1:-test-agent}" "${2:-}" "${3:-}" "sess-1" > "$(qdir)/marker/$name"
 }
 
 # ⚠ 이것은 record-pass.sh 가 아니다. 훅 단독 테스트용으로 covered.tsv 에 한 줄을

@@ -5,28 +5,61 @@ load helper
 setup() { setup_repo; seed_repo; }
 teardown() { teardown_repo; }
 
-stamp_run() {  # $1 = agent, $2 = command
+stamp_run() {  # $1 = agent, $2 = command, $3 = agent_id, $4 = agent_type
   jq -n --arg c "${2:-git commit -m x}" --arg cwd "$PWD" --arg s "sess-abc" \
-    '{tool_name:"Bash", cwd:$cwd, session_id:$s, tool_input:{command:$c}}' \
+        --arg aid "${3:-}" --arg at "${4:-}" \
+    '{tool_name:"Bash", cwd:$cwd, session_id:$s, tool_input:{command:$c}}
+     + (if $aid == "" then {} else {agent_id:$aid, agent_type:$at} end)' \
   | bash "$PLUGIN_ROOT/scripts/stamp-agent.sh" --agent "${1:-claude-code}"
 }
 
 @test "마커 파일을 만든다" {
   stamp_run claude-code
-  [ -f "$(qdir)/agent-session" ]
+  [ -f "$(qdir)/marker/main" ]
 }
 
 @test "마커에 에이전트 이름과 세션 ID 가 들어간다" {
   stamp_run claude-code
-  run cat "$(qdir)/agent-session"
+  run cat "$(qdir)/marker/main"
   [[ "$output" == *"claude-code"* ]]
   [[ "$output" == *"sess-abc"* ]]
 }
 
 @test "codex 로도 동작한다 (같은 스크립트)" {
   stamp_run codex
-  run cat "$(qdir)/agent-session"
+  run cat "$(qdir)/marker/main"
   [[ "$output" == *"codex"* ]]
+}
+
+@test "agent_id 가 없으면 marker/main 에 쓴다" {
+  stamp_run claude-code 'git commit -m x'
+  [ -f "$(qdir)/marker/main" ]
+}
+
+@test "agent_id 가 있으면 그 이름의 마커 파일에 쓴다" {
+  stamp_run claude-code 'git commit -m x' a3afdf6e2d861a6a9 general-purpose
+  [ -f "$(qdir)/marker/a3afdf6e2d861a6a9" ]
+  [ ! -f "$(qdir)/marker/main" ]
+}
+
+@test "마커에 agent_id 와 agent_type 이 들어간다" {
+  stamp_run claude-code 'git commit -m x' a3afdf6e2d861a6a9 general-purpose
+  run cat "$(qdir)/marker/a3afdf6e2d861a6a9"
+  [[ "$output" == *"a3afdf6e2d861a6a9"* ]]
+  [[ "$output" == *"general-purpose"* ]]
+}
+
+@test "병렬 두 에이전트의 마커가 서로를 덮지 않는다" {
+  stamp_run claude-code 'git commit -m x' aaa11 general-purpose
+  stamp_run claude-code 'git commit -m x' bbb22 code-reviewer
+  [ -f "$(qdir)/marker/aaa11" ]
+  [ -f "$(qdir)/marker/bbb22" ]
+}
+
+@test "agent_id 의 경로 문자를 정규화한다" {
+  stamp_run claude-code 'git commit -m x' '../../etc/passwd' general-purpose
+  [ ! -e "$(qdir)/marker/../../etc/passwd" ]
+  [ "$(find "$(qdir)/marker" -type f | wc -l | tr -d ' ')" = "1" ]
 }
 
 @test "stdout 에 아무것도 쓰지 않는다" {
@@ -52,12 +85,12 @@ stamp_run() {  # $1 = agent, $2 = command
   # "touch 로 밀어 넣은 값이 아니다" 를 직접 주장한다.
   mtime_of() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1"; }
   stamp_run claude-code
-  first=$(mtime_of "$(qdir)/agent-session")
-  touch -t 202601010000 "$(qdir)/agent-session"
-  touched=$(mtime_of "$(qdir)/agent-session")
+  first=$(mtime_of "$(qdir)/marker/main")
+  touch -t 202601010000 "$(qdir)/marker/main"
+  touched=$(mtime_of "$(qdir)/marker/main")
   [ "$touched" -ne "$first" ]                 # touch 가 실제로 밀어 넣었는지 확인
   stamp_run claude-code
-  second=$(mtime_of "$(qdir)/agent-session")
+  second=$(mtime_of "$(qdir)/marker/main")
   [ "$second" -ne "$touched" ]                # 갱신되지 않으면 여기서 걸린다
   [ "$second" -ge "$first" ]
 }
@@ -69,17 +102,17 @@ stamp_run() {  # $1 = agent, $2 = command
   # 마커가 늘 신선해서, 그 창에 들어온 모든 커밋이 출처와 무관하게 에이전트
   # 커밋으로 보인다. IDE 커밋이 실제로 그렇게 막혔다.
   for c in 'ls -la' 'npm test' 'git status' 'git log --oneline' 'cat README.md'; do
-    rm -f "$(qdir)/agent-session"
+    rm -f "$(qdir)/marker/main"
     stamp_run claude-code "$c"
-    [ ! -f "$(qdir)/agent-session" ] || { echo "[$c] 가 마커를 남겼다"; return 1; }
+    [ ! -f "$(qdir)/marker/main" ] || { echo "[$c] 가 마커를 남겼다"; return 1; }
   done
 }
 
 @test "커밋처럼 보이는 명령에서는 마커를 남긴다" {
   for c in 'git commit -m x' 'npm test && git commit -am x' 'git commit'; do
-    rm -f "$(qdir)/agent-session"
+    rm -f "$(qdir)/marker/main"
     stamp_run claude-code "$c"
-    [ -f "$(qdir)/agent-session" ] || { echo "[$c] 가 마커를 남기지 않았다"; return 1; }
+    [ -f "$(qdir)/marker/main" ] || { echo "[$c] 가 마커를 남기지 않았다"; return 1; }
   done
 }
 
