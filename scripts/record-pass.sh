@@ -47,8 +47,8 @@ if jq -e '.questions[] | select(.format == "free")
   die "서술형 답변이 비어 있습니다"
 fi
 
-git_dir="$(git rev-parse --git-dir 2>/dev/null)" || die "git 저장소가 아닙니다"
-qdir="$git_dir/quiz-gate"
+git_common_dir="$(git rev-parse --git-common-dir 2>/dev/null)" || die "git 저장소가 아닙니다"
+qdir="$git_common_dir/quiz-gate"
 pending_file="$qdir/pending"
 
 # 대상 결정은 scripts/pending.sh 하나에만 있다 — 스킬(SKILL.md §1)도 같은

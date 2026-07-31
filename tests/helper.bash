@@ -15,8 +15,24 @@ setup_repo() {
   git config commit.gpgsign false
 }
 
+# 링크된 워크트리를 만들고 그 경로를 stdout 으로 낸다.
+# teardown_repo 가 지울 수 있도록 TEST_WORKTREES 에 모아 둔다.
+add_worktree() {  # $1 = 새 브랜치 이름
+  local wt
+  wt="$(mktemp -d)"
+  rm -rf "$wt"   # git worktree add 는 존재하지 않는 경로를 요구한다
+  git worktree add -q "$wt" -b "$1" >/dev/null 2>&1 || return 1
+  TEST_WORKTREES="${TEST_WORKTREES:-} $wt"
+  export TEST_WORKTREES
+  echo "$wt"
+}
+
 teardown_repo() {
   cd / || return 0
+  for wt in ${TEST_WORKTREES:-}; do
+    [ -d "$wt" ] && rm -rf "$wt"
+  done
+  TEST_WORKTREES=""
   [ -n "${TEST_REPO:-}" ] && [ -d "$TEST_REPO" ] && rm -rf "$TEST_REPO"
   return 0
 }
@@ -30,7 +46,7 @@ seed_repo() {
   git commit -qm init
 }
 
-qdir() { git rev-parse --git-path quiz-gate; }
+qdir() { echo "$(git rev-parse --git-common-dir)/quiz-gate"; }
 hooksdir() { git rev-parse --git-path hooks; }
 
 install_hook() {

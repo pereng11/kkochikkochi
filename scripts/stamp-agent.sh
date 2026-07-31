@@ -55,7 +55,7 @@ esac
 # 바로 그것이다.
 #
 # 이제 마커는 에이전트가 실제로 커밋하기 직전 몇 초 동안만 존재한다.
-qdir="$(git rev-parse --git-path quiz-gate)"
+qdir="$(git rev-parse --git-common-dir)/quiz-gate"
 mkdir -p "$qdir" 2>/dev/null || exit 0
 
 session="unknown"

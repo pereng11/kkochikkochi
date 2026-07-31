@@ -9,7 +9,7 @@
 
 set -u
 
-QDIR="$(git rev-parse --git-path quiz-gate)"
+QDIR="$(git rev-parse --git-common-dir)/quiz-gate"
 CHAINED="$(git rev-parse --git-path hooks)/pre-commit.kkochikkochi-chained"
 
 # 핸드셰이크 마커를 몇 초까지 "신선하다"고 볼 것인가.

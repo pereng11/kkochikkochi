@@ -31,8 +31,8 @@ die() { echo "kkochikkochi: $1" >&2; exit 1; }
 # 기록한 뒤 지운다 — 그래서 이 창이 실제로 문제가 되는 구간은 매우 좁다.
 PENDING_FRESH_SECS=900
 
-git_dir="$(git rev-parse --git-dir 2>/dev/null)" || die "git 저장소가 아닙니다"
-pending_file="$git_dir/quiz-gate/pending"
+git_common_dir="$(git rev-parse --git-common-dir 2>/dev/null)" || die "git 저장소가 아닙니다"
+pending_file="$git_common_dir/quiz-gate/pending"
 
 # ① 훅이 발표한 답이 있고 신선하면 그것을 쓴다.
 #
