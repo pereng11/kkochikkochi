@@ -59,7 +59,10 @@ pending="$(bash "$SCRIPT_DIR/pending.sh")" || exit 1
 
 mkdir -p "$qdir/passes" || die "상태 디렉터리를 만들 수 없습니다"
 
-pass_id="p-$(date -u +%Y%m%d-%H%M%S)"
+# 초 해상도만으로는 같은 초에 통과한 두 건이 같은 pass_id 를 받아, mv 가
+# 앞 건의 감사 기록을 덮는다. covered.tsv 는 그대로 그 id 를 가리키므로
+# 남의 문답을 가리키는 라인이 남는다. 병렬 서브에이전트에서 실제로 일어난다.
+pass_id="p-$(date -u +%Y%m%d-%H%M%S)-$$"
 
 # 문답 전문을 먼저 저장하고, 그것이 안전하게 자리잡은 뒤에만 covered.tsv 에
 # 커버리지를 기록한다. 순서를 반대로 하면(커버리지 라인을 먼저 쓰면)
