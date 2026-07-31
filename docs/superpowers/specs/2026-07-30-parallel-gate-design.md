@@ -80,7 +80,11 @@ SDK 타입 정의가 같은 것을 말한다.
 
 밀어 넣는 방법은 `hookSpecificOutput.additionalContext` 다. **`PostToolUse(Task)` 페이로드에는 `agent_id` 가 없다** — SDK 정의가 "Present only when the hook fires from inside a Task-spawned sub-agent; absent on the main thread" 라고 못 박고 있고, 이 훅은 부모 문맥에서 돈다. 그래서 `SubagentStop` 이 `agents/<agent_id>` 에 봉인 표시를 남기고, `PostToolUse` 는 그 표시를 디스크에서 읽어 어느 번들을 검증해야 하는지 안다.
 
-`SubagentStop` 이 `PostToolUse(Task)` 보다 먼저 도는 것에 기대지만, 그것이 어긋나도 안전하다 — 봉인된 번들이 하나도 없으면 `PostToolUse` 는 원장 전체의 미검증으로 물러나 요구한다.
+`SubagentStop` 이 `PostToolUse(Task)` 보다 먼저 도는 것에 기대지만, 그것이 어긋나도 안전하다 — **단, 이 순서를 어떻게 처리할지는 두 갈래로 나뉜다.**
+
+`agents/<agent_id>` 에 아예 기록이 없는 agent_id(예: `SubagentStart` 훅 자체가 발동하지 않은 경우)는 봉인 여부를 판단할 근거가 없으므로 "모른다"를 "안전한 쪽"으로 처리한다 — `PostToolUse` 는 원장에서 그 agent_id 몫을 찾아 즉시 요구한다.
+
+반대로 `agents/<agent_id>` 기록이 있는데 아직 `sealed_at` 이 비어 있는 경우(순서가 `SubagentStart` → `PostToolUse(Task)` → `SubagentStop` 로 뒤집혀, 서브에이전트가 아직 도는 중이라는 것을 `PostToolUse` 가 직접 알 수 있는 경우)는 **의도적으로 조용히 넘어간다.** 아직 일하는 중인 서브에이전트에게 검증부터 조르는 것은 순서가 틀렸다고 판단했다 — 반대급부로, 이번이 그 턴의 마지막 `PostToolUse(Task)` 라면(더 이상 부모 문맥이 도는 자리가 없다면) 이 번들은 부모에게 끝내 알려지지 않고 `Stop` 훅에만 맡겨진다. `Stop` 은 봉인 여부를 전혀 보지 않고 원장 전체의 미검증만 보므로(§3 표), 이 경우에도 턴 끝에서는 반드시 잡는다 — 다만 "일이 끝나자마자 부모 문맥에서" 대신 "턴이 끝날 때"로 검증 시점이 뒤로 밀린다. `tests/bundle.bats` 의 역순 테스트가 이 트레이드오프를 고정한다.
 
 ### `Stop` 훅과 무한 루프
 

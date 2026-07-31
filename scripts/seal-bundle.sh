@@ -45,9 +45,17 @@ agent_id="$(jq -r '.agent_id // ""' <<<"$payload" 2>/dev/null || echo "")"
 agent_type="$(jq -r '.agent_type // ""' <<<"$payload" 2>/dev/null || echo "")"
 [ -n "$agent_id" ] || exit 0
 
-# 마커(scripts/stamp-agent.sh)와 같은 정규화를 쓴다 — 두 곳의 파일명이
+# 마커(scripts/stamp-agent.sh)와 같은 정규화를 쓴다 — 두 곳의 **파일명**이
 # 어긋나면 번들을 찾지 못한다. 문자 그대로 복사했다: `tr -c 'A-Za-z0-9_-'
 # '_' | cut -c1-64`.
+#
+# 주의: 이 정규화는 파일명(경로 순회 방지)에만 쓴다. `pending.sh --bundle`
+# 은 원장(ledger.tsv)의 agent_id 열과 그대로 비교하는데, 그 열은
+# `hooks/pre-commit` 이 마커에서 받은 **원문** agent_id 를 정규화 없이 적는다
+# (예: `sess.1/agent:9` 처럼 `.`·`/`·`:` 를 담은 값). 파일명을 정규화한
+# `name` 을 `pending.sh --bundle` 에 넘기면 두 값이 갈라져 조회가 실패한다
+# (review critical finding). 그래서 원문 `agent_id` 를 파일 **안**에 별도
+# 필드로 남기고, `bundle-notify.sh` 는 조회할 때 반드시 그 필드를 쓴다.
 name="$(printf '%s' "$agent_id" | tr -c 'A-Za-z0-9_-' '_' | cut -c1-64)"
 [ -n "$name" ] || exit 0
 
@@ -55,15 +63,36 @@ mkdir -p "$qdir/agents" 2>/dev/null || exit 0
 file="$qdir/agents/$name"
 now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
+# agent_type 과 agent_id(원문)는 페이로드에서 온 임의의 문자열이라 탭이나
+# 개행을 담을 수 있다. 그대로 탭 구분 줄에 넣으면 필드 수가 늘어나거나
+# 줄이 갈라져 파일 구조가 깨진다 — 그러면 `sealed`(3번 필드) 자리가 밀려,
+# **아직 도는 번들이 이미 봉인된 것처럼** 읽힐 수 있다(review mandate:
+# `cut -f3`가 봉인 안 된 번들에서 non-empty 를 낼 수 있음을 재현했다).
+# jq 의 JSON 문자열 인코딩은 제어 문자(탭·개행 포함)를 전부 `\t`·`\n` 같은
+# 2문자 이스케이프로 바꿔 항상 한 줄짜리 값을 내므로, 그 값을 필드로 쓰면
+# 필드 수·줄 수가 입력 내용과 무관하게 고정된다. jq 는 이 스크립트의 필수
+# 의존성이라(맨 위에서 이미 확인) 여기서 실패할 일이 거의 없지만, 혹시
+# 실패해도 빈 문자열이 아니라 유효한 JSON 문자열(`""`)로 떨어지게 한다 —
+# 필드가 아예 비면(개행 없는 빈 줄) 그 자체로 필드 수가 흔들린다.
+encode() {  # $1 = 원문 문자열 -> 한 줄짜리 JSON 문자열 리터럴
+  jq -Rn --arg s "$1" '$s' 2>/dev/null || printf '""'
+}
+
+agent_type_enc="$(encode "$agent_type")"
+agent_id_enc="$(encode "$agent_id")"
+
+# started 는 이 스크립트가 직접 만드는 ISO-8601 시각이라 탭/개행 걱정이
+# 없다 — 필드 2는 그대로 둔다.
 started=""
-[ -r "$file" ] && started="$(cut -f2 "$file" 2>/dev/null | head -n 1)"
+[ -r "$file" ] && started="$(cut -sf2 "$file" 2>/dev/null | head -n 1)"
 [ -n "$started" ] || started="$now"
 
+# 파일 형식: <agent_type(JSON 문자열)>\t<started_at>\t<sealed_at>\t<agent_id(JSON 문자열)>
 if [ "$EVENT" = "start" ]; then
   # 이미 봉인된 같은 이름이 있으면(재개된 에이전트) 봉인을 푼다 — 새 커밋이
   # 이어질 수 있고, 봉인된 채로 두면 그 뒤 커밋이 요구 대상에서 빠진다.
-  printf '%s\t%s\t%s\n' "$agent_type" "$started" "" > "$file" 2>/dev/null || :
+  printf '%s\t%s\t%s\t%s\n' "$agent_type_enc" "$started" "" "$agent_id_enc" > "$file" 2>/dev/null || :
 else
-  printf '%s\t%s\t%s\n' "$agent_type" "$started" "$now" > "$file" 2>/dev/null || :
+  printf '%s\t%s\t%s\t%s\n' "$agent_type_enc" "$started" "$now" "$agent_id_enc" > "$file" 2>/dev/null || :
 fi
 exit 0
