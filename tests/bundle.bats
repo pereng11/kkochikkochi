@@ -187,6 +187,44 @@ notify_run() {
   [ "$(printf '%s' "$output" | jq -r '.decision')" = "block" ]
 }
 
+# 66f9a25 이전(구버전) 의 agents/<name> 파일은 3필드였다: <agent_type>\t
+# <started_at>\t<sealed_at> — 원문 agent_id 를 담는 4번째 필드가 없다. 이
+# 저장소는 스스로를 dogfood 하고, 문서화된 갱신 흐름(plugin uninstall →
+# install → reload)이 quiz-gate/agents/ 를 청소하지 않으므로, 구버전
+# 파일이 새 코드와 함께 디스크에 남는 창이 실제로 있다.
+write_legacy_agent_file() {  # $1 = sanitized name, $2 = agent_type, $3 = sealed_at(빈 문자열 가능)
+  mkdir -p "$(qdir)/agents"
+  printf '%s\t%s\t%s\n' "$2" "2026-07-30T00:00:00Z" "$3" > "$(qdir)/agents/$1"
+}
+
+@test "구버전 3필드 포맷의 봉인 안 된 번들은 요구되지 않는다 (Important 수정 회귀)" {
+  # review 재현: 구버전(3필드) 미봉인 agents/aaa11 + 원장의 aaa11 행.
+  # 4번째 필드(원문 agent_id)가 아예 없어 디코드가 항상 빈 문자열을 내는데,
+  # 예전 코드는 그 디코드 실패로 먼저 continue 하는 바람에 "아직 도는
+  # 중"이라는 사실을 기록하지 못했고, 폴백이 이 번들을 "봉인 기록이 아예
+  # 없는 것"과 구별하지 못해 도는 중인 서브에이전트에게 검증을 요구해
+  # 버렸다.
+  printf 'C1\n' > c.ts
+  stub_ledger_line c.ts aaa11
+  write_legacy_agent_file aaa11 general-purpose ""   # sealed_at 비어 있음 = 아직 도는 중
+  run notify_run
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "구버전 3필드 포맷이라도 봉인돼 있으면 일반 메시지로는 여전히 요구된다 (benign degrade)" {
+  # 대조군: 같은 구버전 포맷이라도 sealed_at 이 채워져 있으면(이미 끝난
+  # 번들) 상세 메시지(agent_type/agent_id 포함)는 포기하지만 조용히
+  # 사라지지 않는다 — 폴백이 파일명 기반으로 여전히 잡는다.
+  printf 'C1\n' > c.ts
+  stub_ledger_line c.ts aaa11
+  write_legacy_agent_file aaa11 general-purpose "2026-07-30T00:05:00Z"
+  run notify_run
+  [ "$status" -eq 0 ]
+  ctx="$(printf '%s' "$output" | jq -r '.hookSpecificOutput.additionalContext')"
+  [[ "$ctx" == *"c.ts"* ]]
+}
+
 @test "같은 (sha,path) 를 도는 번들과 기록 없는 번들이 공유해도 기록 없는 쪽은 요구된다 (Important 2 수정 회귀)" {
   # AAA 는 도는 중(SubagentStart 만 왔다), BBB 는 agents/ 에 아무 기록도
   # 없다. 둘이 같은 경로에 같은 내용을 커밋해 (sha,path) 가 겹친다.

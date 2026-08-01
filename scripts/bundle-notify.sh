@@ -95,41 +95,39 @@ fi
 # 파일 안의 4번째 필드(원문 agent_id)를 디코드해 넘긴다. 파일명을 그대로
 # 넘기면 agent_id 에 `tr -c 'A-Za-z0-9_-' '_'` 가 바꾸는 문자(64자 초과
 # 포함)가 하나라도 있을 때 조회가 조용히 실패해 이 번들의 요구가 통째로
-# 사라지고, 아래 "아직 도는 번들" 판정도 같이 깨진다(review critical
-# finding, 재현: raw id `sess.1/agent:9` → `--bundle 'sess.1/agent:9'` 는
-# rc=0, `--bundle sess_1_agent_9` 는 rc=1).
+# 사라진다(review critical finding, 재현: raw id `sess.1/agent:9` →
+# `--bundle 'sess.1/agent:9'` 는 rc=0, `--bundle sess_1_agent_9` 는 rc=1).
 #
-# 아직 도는(sealed 가 비어 있는) 번들의 몫은 여기서도, 아래 폴백에서도
-# 요구하지 않는다 — 서브에이전트가 아직 일하는 중인데 검증부터 조르는 순서
-# 역전이기 때문이다(tests/bundle.bats 의 "아직 봉인되지 않은 번들은
-# 요구하지 않는다"가 이 상태를 잡는다. 대신 그 판정을 Stop 훅에 미룬다 —
-# `stop-gate.sh` 는 봉인 여부를 보지 않고 원장 전체를 보므로, 이 턴에 더
-# 이상 `PostToolUse(Task)` 가 없어도(예: 방금이 이번 턴의 마지막
-# 서브에이전트였다) 턴 끝에서 반드시 잡는다. 이 트레이드오프는
-# docs/superpowers/specs/2026-07-30-parallel-gate-design.md §3 에 명시했다).
-#
-# `matched_raw_ids` 에는 이 루프에서 디코드에 성공한 원문 agent_id 를 전부
-# 모은다 — sealed 든 아니든. 아래 폴백은 원장의 agent_id 열 전체를 훑으면서
-# 이 목록에 없는(= agents/ 에 대응 기록이 없는) agent_id 만 개별 조회한다.
+# **"아직 도는 중인가"는 3번째 필드(sealed_at)만으로 판단하고, 그 판단을
+# 이 루프의 다른 어떤 continue 보다 먼저 한다.** 그 필드는 이 스크립트가
+# 처음부터 평문 ISO-8601 로 써 왔고, seal-bundle.sh 가 4번째 필드(원문
+# agent_id)를 추가하기 전(66f9a25 이전, 3필드 포맷)에도 항상 같은 자리에
+# 있었다 — 그래서 4번째 필드를 디코드할 수 있는지와 완전히 무관하게 항상
+# 읽을 수 있다. 예전 버전은 순서가 반대였다: 4번째 필드 디코드가
+# 실패하면(구버전 3필드 포맷이 그 예다) sealed 여부를 보기도 전에
+# continue 해서 "아직 도는 중"이라는 사실 자체를 기록하지 못했고, 그 결과
+# 아래 폴백이 그 번들을 "봉인 기록이 아예 없는 것"과 구별하지 못해 도는
+# 중인 서브에이전트에게 검증을 요구해 버렸다(review, 재현: 구버전 3필드
+# 미봉인 `agents/aaa11` + 원장의 aaa11 행). 이 저장소는 스스로를 dogfood
+# 하고, 문서화된 갱신 흐름이 `plugin uninstall && plugin install` +
+# 재로드라 `quiz-gate/agents/` 의 구버전 파일이 디스크에 남는 창이 실제로
+# 있다 — 가상의 시나리오가 아니다.
 lines=""
-matched_raw_ids=""
 if [ -d "$qdir/agents" ]; then
   for f in "$qdir/agents"/*; do
     [ -f "$f" ] || continue
     sealed="$(cut -sf3 "$f" 2>/dev/null | head -n 1)"
+    [ -n "$sealed" ] || continue   # 아직 도는 중이다 — 상세 메시지를 만들지 않는다
+
     enc_type="$(cut -sf1 "$f" 2>/dev/null | head -n 1)"
     enc_id="$(cut -sf4 "$f" 2>/dev/null | head -n 1)"
     raw_id="$(decode "$enc_id")"
-    # 이 파일에서 원문 agent_id 를 복원할 수 없으면(구버전 3필드 포맷이
-    # 남아 있거나 디코드가 깨진 경우) 이 파일은 건드리지 않는다 —
-    # matched_raw_ids 에도 넣지 않으므로, 이 번들의 원장 줄은 아래 폴백이
-    # (agents/ 에 대응 기록이 없는 것과 똑같이) 일반적인 방식으로 여전히
-    # 잡는다. 틀린 이름으로 조회해 조용히 놓치는 것보다 안전하다.
+    # 봉인은 됐지만 원문 agent_id 를 복원할 수 없으면(구버전 3필드 포맷,
+    # 또는 디코드가 깨진 경우) 상세 메시지는 포기한다. 조용히 사라지지는
+    # 않는다 — 아래 폴백이 원장의 agent_id 열을 직접 훑으므로, 이 번들이
+    # 실제로 미검증을 남겼다면 일반적인(파일명 기반) 메시지로 여전히
+    # 잡는다.
     [ -n "$raw_id" ] || continue
-
-    matched_raw_ids="$matched_raw_ids$raw_id
-"
-    [ -n "$sealed" ] || continue   # 아직 도는 중이다 — 조용히 둔다
 
     bundle_out="$(bash "$SCRIPT_DIR/pending.sh" --bundle "$raw_id" 2>/dev/null)"
     bundle_rc=$?
@@ -156,7 +154,8 @@ kkochikkochi 스킬을 실행해 번들마다 퀴즈를 내세요. 대상은
 \`pending.sh --bundle <agent_id>\` 가 냅니다. 완료 순서대로 하나씩 처리하세요."
 fi
 
-# 폴백 — agents/ 에 대응 기록이 전혀 없는 agent_id 의 몫만 요구한다.
+# 폴백 — 원장에 등장하는 agent_id 를 모두 훑어, 아직 도는 중이 아닌 것만
+# 요구한다.
 #
 # 여기서 (sha, path) **쌍** 단위로 `pending.sh --all-unverified` 의 결과에서
 # "아직 도는 번들의 몫"을 빼는 방식은(예전 구현) 틀렸다 — 그 명령은
@@ -170,18 +169,30 @@ fi
 # → 예전 코드는 알림을 아예 내지 않았다).
 #
 # 그래서 폴백은 **agent_id 단위**로 판단한다: 원장에 등장하는 agent_id 를
-# 모두 훑어(all_rc==0 을 이미 확인했으므로 pending.sh 가 이미 전체 형식을
+# 모두 훑는다(all_rc==0 을 이미 확인했으므로 pending.sh 가 이미 전체 형식을
 # 검증했다는 뜻이고, 그래서 이 열을 직접 읽어도 D45 가 금지하는 "판정을
 # 다시 구현하는 것"이 아니다 — 판정은 여전히 매 agent_id 마다
-# `pending.sh --bundle` 호출이 낸다, 여기서는 "누가 있는가"만 본다)
-# matched_raw_ids 에 없는 것만 개별적으로 `pending.sh --bundle` 로 조회한다.
-# 그 조회는 agent_id 로 이미 걸러져 있으므로 (sha, path) 가 겹쳐도 다른
-# agent 의 몫과 뒤섞이지 않는다.
+# `pending.sh --bundle` 호출이 낸다, 여기서는 "누가 있는가"만 본다).
+#
+# 각 agent_id 의 "아직 도는 중인가"는 위 상세 루프와 똑같은 원칙을 쓴다 —
+# **파일명으로 다시 찾은 agents/<sname> 파일의 3번째 필드만** 본다. 원장의
+# 원문 agent_id 를 seal-bundle.sh 와 정확히 같은 함수로 정규화해 파일명을
+# 계산하므로(그 정규화는 결정적이다) 두 스크립트는 항상 같은 이름에
+# 도달한다. 상세 루프가 쓰는 4번째 필드(원문 agent_id) 디코드는 여기서
+# 아예 필요 없다 — 그래서 그 디코드가 실패하는 구버전 파일이라도 "도는
+# 중"이라는 판정 자체는 절대 놓치지 않는다. agents/<sname> 파일이 아예
+# 없으면(봉인 기록 자체가 없다) 판단할 근거가 없으므로 안전한 쪽(요구한다)
+# 으로 간다.
 fallback_out=""
 if [ -r "$ledger" ]; then
   while IFS= read -r raw; do
     [ -n "$raw" ] || continue
-    printf '%s\n' "$matched_raw_ids" | grep -Fxq "$raw" && continue
+
+    sname="$(printf '%s' "$raw" | tr -c 'A-Za-z0-9_-' '_' | cut -c1-64)"
+    if [ -n "$sname" ] && [ -f "$qdir/agents/$sname" ]; then
+      sealed="$(cut -sf3 "$qdir/agents/$sname" 2>/dev/null | head -n 1)"
+      [ -n "$sealed" ] || continue   # 아직 도는 중이다 — 조용히 둔다
+    fi
 
     bundle_out="$(bash "$SCRIPT_DIR/pending.sh" --bundle "$raw" 2>/dev/null)"
     bundle_rc=$?
