@@ -18,7 +18,21 @@ install_push_hook() {
 }
 
 # pre-push 훅을 git 없이 직접 태운다 (stdin 계약을 그대로 준다).
+#
+# D47 이후 범위 계산은 stdin 의 remote sha 필드를 보지 않고, 로컬이 이미
+# 아는 리모트 추적 ref(--remotes)만 본다. 실제 git 에서는 그 ref 가
+# remote_sha 와 보통 일치한다(직전 fetch/push 로 생긴다) — 하지만 이 헬퍼는
+# 훅을 stdin 계약으로 직접 태우므로 그런 ref 가 저절로 생기지 않는다. "이미
+# 리모트에 있다"는 낡은 테스트들의 의도를 살리려면 여기서 흉내내야 한다.
+#
+# 진짜 origin 추적 ref(refs/remotes/origin/*)는 건드리지 않는다 —
+# setup_origin 을 쓰는 테스트는 실제 fetch 로 그 ref 를 정확히 채워 두므로
+# 덮어쓰면 오히려 틀린다. 대신 남는 이름 공간을 하나 새로 만든다 — --remotes
+# 는 refs/remotes/ 아래 어떤 이름이든 다 본다.
 run_push_hook() {  # $1 = remote sha, $2 = local sha
+  if commit_sha="$(git rev-parse -q --verify "$1^{commit}" 2>/dev/null)"; then
+    git update-ref refs/remotes/_run_push_hook_sim/remote "$commit_sha" 2>/dev/null
+  fi
   printf 'refs/heads/main %s refs/heads/main %s\n' "$2" "$1" \
     | "$(hooksdir)/pre-push" origin https://example.invalid/r.git
 }
@@ -114,32 +128,7 @@ run_push_hook() {  # $1 = remote sha, $2 = local sha
   [ "$status" -ne 0 ]
 }
 
-@test "remote sha 형식이 이상하면 거부한다" {
-  # 기존 브랜치 경로(`$remote_sha..$local_sha`)는 한 토큰이라 git 자신이
-  # "애매한 인자"로 거부하므로(Critical 2 의 fail-closed 가 그 실패를
-  # 막아 준다), 이 경로만으로는 sha 형식 가드 유무가 관찰 가능한 차이를
-  # 만들지 않는다 — 그래도 방어 계층으로 남겨 둔다: rev-list 앞에서
-  # 먼저 걸러 판정 사유를 "형식 오류"로 명확히 알려 준다(그렇게 검증한다).
-  install_push_hook
-  run run_push_hook "--upload-pack=x" "$(git rev-parse HEAD)"
-  [ "$status" -ne 0 ]
-}
-
 # ── rev-list 실패는 fail-closed 다 (Critical 2) ──
-
-@test "범위를 계산할 수 없으면(모르는 remote sha) 실제 커버리지와 무관하게 거부한다" {
-  install_push_hook
-  # c.ts 자체는 커버돼 있다 — 그래도 범위를 못 구하면 막아야 한다는 것이
-  # 요점이다. rev-list 실패를 fail-open 하면 이 테스트가 우연히 초록이
-  # 되므로, "커버됐지만 그래도 막힌다"를 확인해야 진짜 검증이 된다.
-  unknown_sha="ffffffffffffffffffffffffffffffffffffff"
-  printf 'C1\n' > c.ts; git add c.ts
-  stub_covered_line c.ts
-  commit_as_human -qm "verified"
-  run run_push_hook "$unknown_sha" "$(git rev-parse HEAD)"
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"--no-verify"* ]]
-}
 
 # ── 경로에 개행이 있으면 fail-closed 하고 탈출구를 안내한다 (Important 3) ──
 
@@ -327,4 +316,152 @@ run_push_hook() {  # $1 = remote sha, $2 = local sha
   [ "$status" -ne 0 ]
   [[ "$output" == *"a.txt"* ]]
   rm -rf "$s256"
+}
+
+# ── D47: 게이트가 볼 수 있었던 적 없는 커밋은 검사하지 않는다 ──
+#
+# 로컬 bare 저장소를 origin 으로 쓴다. 리모트를 건드리는 명령은 origin 이
+# 로컬 경로일 때만 허용한다는 격리 규칙을 지킨다.
+
+setup_origin() {   # bare origin 을 만들고 현재 HEAD 를 main 으로 올린다
+  # setup() 의 seed_repo 커밋은 install_push_hook(게이트 설치를 흉내낸다)보다
+  # 먼저 만들어진다 — 실제 install.sh 라면 이 시점의 HEAD 를 epoch 으로
+  # 적었을 것이다(Task 1). 여기서 epoch 을 안 적으면 아래 첫 push 가 seed
+  # 커밋(a.ts/b.ts/old.ts, 미검증) 자체를 새 브랜치 범위로 보고 막아 버려서,
+  # 이 헬퍼를 쓰는 테스트들이 검증하려는 것(리모트/기준점 도달성)과 무관한
+  # 이유로 setup 단계에서부터 실패한다.
+  mkdir -p "$(qdir)"
+  git rev-parse HEAD > "$(qdir)/epoch"
+  ORIGIN="$(mktemp -d)/origin.git"
+  git init -q --bare "$ORIGIN"
+  git remote add origin "$ORIGIN"
+  git push -q origin HEAD:refs/heads/main
+  git fetch -q origin
+}
+
+@test "pull 로 들어온 남의 커밋은 검사에서 빠진다" {
+  install_push_hook
+  setup_origin
+  # 동료가 origin/main 에 커밋을 올린다
+  other="$(mktemp -d)"
+  git clone -q "$ORIGIN" "$other"
+  git -C "$other" config user.email o@e.com
+  git -C "$other" config user.name o
+  git -C "$other" config commit.gpgsign false
+  printf 'COLLEAGUE\n' > "$other/colleague.ts"
+  git -C "$other" add colleague.ts
+  git -C "$other" commit -qm "colleague work"
+  git -C "$other" push -q origin HEAD:refs/heads/main
+  # 나는 feature 를 올려 두고 그 위로 main 을 pull 해 온다
+  git checkout -qb feat
+  printf 'MINE\n' > mine.ts; git add mine.ts
+  stub_covered_line mine.ts
+  commit_as_human -qm "my agent work"
+  git push -q origin feat
+  git fetch -q origin
+  base="$(git rev-parse origin/feat)"
+  git pull -q --no-rebase origin main
+  run run_push_hook "$base" "$(git rev-parse HEAD)"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"colleague.ts"* ]]
+}
+
+@test "리모트 기준으로 만든 새 브랜치의 기준점 커밋은 검사에서 빠진다" {
+  install_push_hook
+  setup_origin
+  git checkout -qb topic origin/main
+  printf 'MINE\n' > mine.ts; git add mine.ts
+  stub_covered_line mine.ts
+  commit_as_human -qm "my agent work"
+  run run_push_hook "$NULL_SHA" "$(git rev-parse HEAD)"
+  [ "$status" -eq 0 ]
+}
+
+@test "리모트가 없어도 epoch 이 초기 커밋을 빼 준다" {
+  install_push_hook
+  # 게이트 설치 시점을 흉내낸다 — seed_repo 의 초기 커밋이 epoch 이다
+  mkdir -p "$(qdir)"
+  git rev-parse HEAD > "$(qdir)/epoch"
+  base="$(git rev-parse HEAD)"
+  printf 'MINE\n' > mine.ts; git add mine.ts
+  stub_covered_line mine.ts
+  commit_as_human -qm "my agent work"
+  run run_push_hook "$NULL_SHA" "$(git rev-parse HEAD)"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"a.ts"* ]]
+  # 대조군: epoch 을 치우면 초기 커밋이 다시 검사 대상이 된다
+  rm -f "$(qdir)/epoch"
+  run run_push_hook "$NULL_SHA" "$(git rev-parse HEAD)"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"a.ts"* ]]
+}
+
+@test "epoch 의 사라진 객체가 push 를 막지 못한다" {
+  install_push_hook
+  mkdir -p "$(qdir)"
+  {
+    git rev-parse HEAD
+    printf 'deadbeef\n' | git hash-object --stdin   # 저장소에 없는 객체
+  } > "$(qdir)/epoch"
+  base="$(git rev-parse HEAD)"
+  printf 'MINE\n' > mine.ts; git add mine.ts
+  stub_covered_line mine.ts
+  commit_as_human -qm "my agent work"
+  run run_push_hook "$NULL_SHA" "$(git rev-parse HEAD)"
+  # 죽은 줄 하나가 rev-list 를 128 로 죽이면 fail-closed 가 모든 push 를
+  # 어떤 퀴즈로도 못 푸는 채로 영구 차단한다 (D00/D42 가 금지하는 모양)
+  [ "$status" -eq 0 ]
+}
+
+@test "epoch 의 16진수 아닌 줄은 rev-list 인자로 새지 않는다" {
+  install_push_hook
+  mkdir -p "$(qdir)"
+  {
+    git rev-parse HEAD
+    printf -- '--all\n'
+  } > "$(qdir)/epoch"
+  printf 'EVIL\n' > evil.ts; git add evil.ts
+  commit_as_human -qm "unverified"
+  run run_push_hook "$NULL_SHA" "$(git rev-parse HEAD)"
+  # --all 이 인자로 새면 범위가 통째로 바뀌어 미검증 내용을 건너뛴다
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"evil.ts"* ]]
+}
+
+@test "epoch 을 읽을 수 없으면 막고 --no-verify 를 안내한다" {
+  install_push_hook
+  mkdir -p "$(qdir)"
+  git rev-parse HEAD > "$(qdir)/epoch"
+  chmod 000 "$(qdir)/epoch"
+  base="$(git rev-parse HEAD)"
+  run run_push_hook "$base" "$base"
+  chmod 644 "$(qdir)/epoch"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--no-verify"* ]]
+}
+
+@test "remote_sha 가 무엇이든 범위 계산에 영향을 주지 않는다" {
+  # remote_sha 는 더 이상 쓰이지 않는다. 예전에는 이 값이 이상하면 거부했다.
+  install_push_hook
+  printf 'MINE\n' > mine.ts; git add mine.ts
+  stub_covered_line mine.ts
+  mkdir -p "$(qdir)"
+  git rev-parse HEAD > "$(qdir)/epoch"
+  commit_as_human -qm "covered work"
+  head="$(git rev-parse HEAD)"
+  run run_push_hook "--upload-pack=x" "$head"
+  [ "$status" -eq 0 ]
+  run run_push_hook "$NULL_SHA" "$head"
+  [ "$status" -eq 0 ]
+}
+
+@test "local sha 를 로컬이 모르면 여전히 fail-closed 다" {
+  # Critical 2 의 성질은 그대로 지킨다 — 범위를 하나도 못 본 것과 정말
+  # 아무것도 없는 것은 다르다. remote_sha 로는 더 이상 재현되지 않으므로
+  # local_sha 로 재현한다.
+  install_push_hook
+  unknown="$(printf 'nope' | git hash-object --stdin)"
+  run run_push_hook "$NULL_SHA" "$unknown"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--no-verify"* ]]
 }
