@@ -328,3 +328,57 @@ FAKEMV
   [[ "$output" == *"ORIGINAL"* ]]
   [ ! -f "$(hooksdir)/pre-commit.kkochikkochi-chained" ]
 }
+
+# ── epoch — 게이트가 볼 수 있었던 적 없는 이력의 경계 (D47) ──
+
+@test "install 이 epoch 에 그 시점의 ref 팁을 적는다" {
+  inst install
+  [ -f "$(qdir)/epoch" ]
+  run cat "$(qdir)/epoch"
+  [[ "$output" == *"$(git rev-parse HEAD)"* ]]
+}
+
+@test "재설치는 epoch 을 덮어쓰지 않는다" {
+  inst install
+  first="$(cat "$(qdir)/epoch")"
+  printf 'C1\n' > c.ts; git add c.ts; commit_as_human -qm "after install"
+  # 대조군: HEAD 가 실제로 움직였다 — 안 그러면 아래 비교가 공허하다
+  [ "$(git rev-parse HEAD)" != "$first" ]
+  inst install
+  [ "$(cat "$(qdir)/epoch")" = "$first" ]
+}
+
+@test "uninstall 후 install 은 epoch 을 새로 쓴다" {
+  inst install
+  first="$(cat "$(qdir)/epoch")"
+  printf 'C1\n' > c.ts; git add c.ts; commit_as_human -qm "after install"
+  inst uninstall
+  inst install
+  [ "$(cat "$(qdir)/epoch")" != "$first" ]
+  run cat "$(qdir)/epoch"
+  [[ "$output" == *"$(git rev-parse HEAD)"* ]]
+}
+
+@test "uninstall 이 quiz-gate 를 통째로 지우고 알린다" {
+  inst install
+  mkdir -p "$(qdir)/passes"
+  printf '{}\n' > "$(qdir)/passes/p-stub.json"
+  stub_covered_line a.ts
+  # 대조군: 지우기 전에 실제로 있었다
+  [ -f "$(qdir)/covered.tsv" ]
+  run inst uninstall
+  [ "$status" -eq 0 ]
+  [ ! -d "$(qdir)" ]
+  [[ "$output" == *"quiz-gate"* ]]
+}
+
+@test "ref 가 하나도 없는 저장소에서도 install 이 죽지 않는다" {
+  empty="$(mktemp -d)"
+  git -C "$empty" init -q .
+  git -C "$empty" config user.email t@e.com
+  git -C "$empty" config user.name t
+  run env -C "$empty" bash "$PLUGIN_ROOT/scripts/install.sh" install
+  [ "$status" -eq 0 ]
+  [ -f "$empty/.git/quiz-gate/epoch" ]
+  [ ! -s "$empty/.git/quiz-gate/epoch" ]
+}

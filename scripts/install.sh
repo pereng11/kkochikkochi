@@ -28,6 +28,38 @@ die() { echo "kkochikkochi: $1" >&2; exit 1; }
 git rev-parse --git-dir >/dev/null 2>&1 || die "git 저장소가 아닙니다"
 
 HOOKS_DIR="$(git rev-parse --git-path hooks)"
+QDIR="$(git rev-parse --git-common-dir)/quiz-gate"
+EPOCH="$QDIR/epoch"
+
+# epoch — 게이트가 이 저장소에 설치될 때 **이미 존재하던 모든 ref 팁**.
+# hooks/pre-push 가 이것을 읽어, 그보다 앞선 이력을 검사 대상에서 뺀다 (D47).
+#
+# **파일이 없을 때만 쓴다.** install 은 "처음 설치"만 뜻하지 않는다 — 훅이
+# 낡으면 scripts/stamp-agent.sh 의 건강검진이 커밋을 거부하며 에이전트에게
+# 이 명령을 시키므로, 플러그인이 업데이트될 때마다 모든 사용자의 저장소에서
+# install 이 다시 돈다. 거기서 epoch 을 갱신하면 사용자는 "업데이트했을
+# 뿐"인데 그때까지 쌓인 미검증 커밋이 전부 면제된다 — 이 프로젝트가 내내
+# 싸워온 "게이트가 조용히 꺼지는 것"의 새로운 모양이다.
+#
+# uninstall 이 quiz-gate 를 통째로 지우므로, "다시 시작"은 그 경로로만
+# 일어난다. 규칙이 하나라서 최초 설치·갱신·구버전 업그레이드가 전부 맞는다.
+#
+# 실패해도 설치를 막지 않는다. epoch 이 없으면 pre-push 는 예전처럼(제외
+# 없이) 동작할 뿐이고, 그것은 회귀가 아니라 현상 유지다.
+write_epoch_if_absent() {
+  [ -e "$EPOCH" ] && return 0
+  mkdir -p "$QDIR" 2>/dev/null || return 0
+  tmp="$EPOCH.tmp.$$"
+  # 빈 저장소(커밋 전)에서는 두 명령이 다 아무것도 내지 않고 0 이 아닌 값으로
+  # 끝난다. set -o pipefail 아래서 그것이 파이프라인 실패로 번지지 않도록
+  # 각각 || true 로 받는다 — 빈 epoch 은 오류가 아니라 정답이다.
+  {
+    git for-each-ref --format='%(objectname)' refs/heads refs/tags refs/remotes 2>/dev/null || true
+    git rev-parse --verify --quiet HEAD 2>/dev/null || true
+  } | sort -u > "$tmp" 2>/dev/null || { rm -f "$tmp"; return 0; }
+  mv "$tmp" "$EPOCH" 2>/dev/null || rm -f "$tmp"
+  return 0
+}
 
 src_for()     { echo "$SCRIPT_DIR/../hooks/$1"; }
 target_for()  { echo "$HOOKS_DIR/$1"; }
@@ -91,6 +123,10 @@ kkochikkochi: 이 저장소는 core.hooksPath 를 사용합니다 ($(git config 
 MSG
     exit 2
   fi
+
+  # 훅을 놓기 전에 찍는다. 순서가 반대면 설치와 첫 커밋 사이의 커밋이
+  # epoch 에 들어가 검사 대상에서 빠질 수 있다.
+  write_epoch_if_absent
 
   mkdir -p "$HOOKS_DIR" || die "훅 디렉터리를 만들 수 없습니다"
 
@@ -175,6 +211,20 @@ cmd_uninstall() {
       rm -f "$target" || die "훅을 지울 수 없습니다: $name"
     fi
   done
+
+  # 게이트를 걷어내면 상태도 함께 걷어낸다. epoch 과 covered.tsv 가 따로
+  # 놀면 "이력은 지워졌는데 검사는 계속되는" 어긋난 상태가 난다.
+  # 조용히 지우지 않는다 — passes/*.json 은 /kk-log 가 읽는 감사 기록이고
+  # 복구되지 않는다.
+  if [ -d "$QDIR" ]; then
+    n_passes="$(find "$QDIR/passes" -name 'p-*.json' 2>/dev/null | wc -l | tr -d ' ')"
+    if rm -rf "$QDIR" 2>/dev/null; then
+      echo "kkochikkochi: 상태를 지웠습니다 — $QDIR (검증 기록 ${n_passes:-0}건 포함)" >&2
+    else
+      echo "kkochikkochi: 경고 — 상태를 지우지 못했습니다: $QDIR" >&2
+    fi
+  fi
+
   echo "kkochikkochi: 제거 완료" >&2
 }
 
