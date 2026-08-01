@@ -414,16 +414,33 @@ setup_origin() {   # bare origin 을 만들고 현재 HEAD 를 main 으로 올�
 }
 
 @test "epoch 의 16진수 아닌 줄은 rev-list 인자로 새지 않는다" {
+  # "--all" 만으로는 이 테스트가 16진수 검사를 실제로 지키지 못한다(실측,
+  # 코디네이터 지적) — `git cat-file -e "--all"` 은 대시로 시작하는 값을 git
+  # 자신의 옵션 파서가 먼저 잡아 rc=129 로 실패하므로, 16진수 검사를 지워도
+  # 그 줄은 어차피 "사라진 객체" 취급으로 걸러진다(즉 이 값 하나로는 16진수
+  # 검사 자체의 회귀를 못 잡는다).
+  #
+  # `cat-file -e` 가 실제로 못 잡는 건 대시로 시작하지 않는 **ref 이름**이다.
+  # `HEAD` 는 16진수는 아니지만 언제나 존재하는 유효한 리비전이라
+  # `cat-file -e HEAD` 는 rc=0 으로 통과한다(실측: cat-file -e HEAD/main/
+  # refs/heads/main 전부 rc=0). 16진수 검사가 없으면 `HEAD` 가 그대로
+  # epoch_args 에 실려 `rev-list local_sha --not --remotes HEAD` 가 되는데,
+  # 이 훅이 도는 시점의 HEAD 는 지금 막 만든(미검증) 커밋 자신이므로 `--not
+  # HEAD` 가 local_sha 를 통째로 지워 버린다(실측: rev-list HEAD --not
+  # --remotes HEAD → 0 커밋). 결과적으로 검사 대상이 하나도 안 남아 훅이
+  # 조용히 통과한다 — 이 프로젝트가 계속 막아 온 "게이트가 조용히 꺼지는"
+  # 바로 그 모양이다. 16진수 검사가 이 시나리오의 유일한 방어선이다.
   install_push_hook
   mkdir -p "$(qdir)"
   {
     git rev-parse HEAD
     printf -- '--all\n'
+    printf 'HEAD\n'
   } > "$(qdir)/epoch"
   printf 'EVIL\n' > evil.ts; git add evil.ts
   commit_as_human -qm "unverified"
   run run_push_hook "$NULL_SHA" "$(git rev-parse HEAD)"
-  # --all 이 인자로 새면 범위가 통째로 바뀌어 미검증 내용을 건너뛴다
+  # HEAD 가 인자로 새면 범위 자체가 사라져 미검증 내용을 건너뛴다
   [ "$status" -ne 0 ]
   [[ "$output" == *"evil.ts"* ]]
 }
