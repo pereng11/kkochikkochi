@@ -175,22 +175,54 @@ fi
 # `pending.sh --bundle` 호출이 낸다, 여기서는 "누가 있는가"만 본다).
 #
 # 각 agent_id 의 "아직 도는 중인가"는 위 상세 루프와 똑같은 원칙을 쓴다 —
-# **파일명으로 다시 찾은 agents/<sname> 파일의 3번째 필드만** 본다. 원장의
-# 원문 agent_id 를 seal-bundle.sh 와 정확히 같은 함수로 정규화해 파일명을
-# 계산하므로(그 정규화는 결정적이다) 두 스크립트는 항상 같은 이름에
-# 도달한다. 상세 루프가 쓰는 4번째 필드(원문 agent_id) 디코드는 여기서
-# 아예 필요 없다 — 그래서 그 디코드가 실패하는 구버전 파일이라도 "도는
-# 중"이라는 판정 자체는 절대 놓치지 않는다. agents/<sname> 파일이 아예
-# 없으면(봉인 기록 자체가 없다) 판단할 근거가 없으므로 안전한 쪽(요구한다)
-# 으로 간다.
+# 파일명으로 다시 찾은 agents/<name> 파일의 **3번째 필드만** 본다(4번째
+# 필드 디코드는 필요 없다 — 그래서 그 디코드가 실패하는 구버전 3필드
+# 포맷이라도 "도는 중"이라는 판정 자체는 절대 놓치지 않는다).
+#
+# 이름은 **두 후보를 순서대로** 시도한다 (round 4 review 의 root cause 수정):
+#
+#   1) 해시 이름 — seal-bundle.sh 가 지금 쓰는, raw agent_id 에서 주입적으로
+#      (사실상 충돌 없이) 유도한 이름. 이 agent_id 가 새 코드 아래에서 한
+#      번이라도 seal-bundle.sh 를 거쳤다면 반드시 여기서 찾는다.
+#   2) 예전 `tr -c 'A-Za-z0-9_-' '_' | cut -c1-64` 이름 — round 4 이전
+#      seal-bundle.sh 가 쓰던, **충돌하도록 설계된** 이름. 이 저장소는
+#      스스로를 dogfood 하고, 문서화된 갱신 흐름(plugin uninstall→install
+#      +재로드)이 quiz-gate/agents/ 를 청소하지 않으므로, 업그레이드 이후
+#      아직 한 번도 seal-bundle.sh 를 거치지 않은 번들의 파일이 옛 이름
+#      그대로 남아 있을 수 있다. 그 파일을 놓치면 round 3 가 고친 "구버전
+#      포맷이 아직 도는 중인데 요구해 버리는" 사고가 이번엔 "구버전 이름
+#      이라 아예 못 찾는" 모양으로 되살아난다.
+#
+#   둘 다 없으면 봉인 기록이 없는 것으로 보고 안전한 쪽(요구한다)으로
+#   간다 — 이 경로는 명시적이고(이 주석과 아래 분기), 관찰 가능하다(테스트로
+#   고정돼 있다): "찾지 못했다 → 요구한다"는 이 폴백 전체의 기존 규칙을
+#   그대로 따를 뿐 조용히 사라지는 새 경로가 아니다.
+#
+#   두 후보 다 내용을 디코드해 재확인하지 않는다 — 해시 이름은 주입적이라
+#   재확인이 필요 없고, tr 이름은 여전히 충돌 가능하지만 그 위험은 "새
+#   코드로 아직 한 번도 안 건드려진 두 legacy id 가 동시에 이 이름을
+#   공유하는" 좁은 과거-전환기 창에만 남는다 — 원래 결함(모든 id 가 영원히
+#   충돌)보다 훨씬 좁고, 둘 중 하나라도 다시 seal-bundle.sh 를 거치면 그
+#   즉시 자기 몫의 해시 이름 파일이 생겨 이 창에서 빠져나간다(자기 치유).
+#   이미 서로 덮어써 사라진 과거 데이터까지 지금 복구할 방법은 없다 —
+#   round 4 report 에 이 잔여 위험을 남겼다.
 fallback_out=""
 if [ -r "$ledger" ]; then
   while IFS= read -r raw; do
     [ -n "$raw" ] || continue
 
-    sname="$(printf '%s' "$raw" | tr -c 'A-Za-z0-9_-' '_' | cut -c1-64)"
-    if [ -n "$sname" ] && [ -f "$qdir/agents/$sname" ]; then
-      sealed="$(cut -sf3 "$qdir/agents/$sname" 2>/dev/null | head -n 1)"
+    hash_name="$(printf '%s' "$raw" | git hash-object --stdin 2>/dev/null)"
+    legacy_name="$(printf '%s' "$raw" | tr -c 'A-Za-z0-9_-' '_' | cut -c1-64)"
+
+    agent_file=""
+    if [ -n "$hash_name" ] && [ -f "$qdir/agents/$hash_name" ]; then
+      agent_file="$qdir/agents/$hash_name"
+    elif [ -n "$legacy_name" ] && [ -f "$qdir/agents/$legacy_name" ]; then
+      agent_file="$qdir/agents/$legacy_name"
+    fi
+
+    if [ -n "$agent_file" ]; then
+      sealed="$(cut -sf3 "$agent_file" 2>/dev/null | head -n 1)"
       [ -n "$sealed" ] || continue   # 아직 도는 중이다 — 조용히 둔다
     fi
 

@@ -45,18 +45,42 @@ agent_id="$(jq -r '.agent_id // ""' <<<"$payload" 2>/dev/null || echo "")"
 agent_type="$(jq -r '.agent_type // ""' <<<"$payload" 2>/dev/null || echo "")"
 [ -n "$agent_id" ] || exit 0
 
-# 마커(scripts/stamp-agent.sh)와 같은 정규화를 쓴다 — 두 곳의 **파일명**이
-# 어긋나면 번들을 찾지 못한다. 문자 그대로 복사했다: `tr -c 'A-Za-z0-9_-'
-# '_' | cut -c1-64`.
+# 파일명은 원문 agent_id 의 해시로 정한다.
 #
-# 주의: 이 정규화는 파일명(경로 순회 방지)에만 쓴다. `pending.sh --bundle`
-# 은 원장(ledger.tsv)의 agent_id 열과 그대로 비교하는데, 그 열은
-# `hooks/pre-commit` 이 마커에서 받은 **원문** agent_id 를 정규화 없이 적는다
-# (예: `sess.1/agent:9` 처럼 `.`·`/`·`:` 를 담은 값). 파일명을 정규화한
-# `name` 을 `pending.sh --bundle` 에 넘기면 두 값이 갈라져 조회가 실패한다
-# (review critical finding). 그래서 원문 `agent_id` 를 파일 **안**에 별도
-# 필드로 남기고, `bundle-notify.sh` 는 조회할 때 반드시 그 필드를 쓴다.
-name="$(printf '%s' "$agent_id" | tr -c 'A-Za-z0-9_-' '_' | cut -c1-64)"
+# round 4 review 의 근본 원인: 예전에는 마커(scripts/stamp-agent.sh)와 같은
+# `tr -c 'A-Za-z0-9_-' '_' | cut -c1-64` 정규화를 문자 그대로 복사해 썼다.
+# 그 정규화는 **처음부터 충돌하도록 만들어져 있다** — "a.b" 와 "a/b" 는 둘
+# 다 "a_b" 로 뭉개지고(문자 충돌), 64바이트를 넘는 서로 다른 두 agent_id
+# 도 뭉개진다(자름 충돌). 마커(marker/<name>)는 이름을 다시 계산해 찾는
+# 곳이 아무 데도 없어(각 훅이 자기 자신의 최신 상태만 쓰고, 읽는 쪽은 항상
+# `marker/*` 를 통째로 훑으며 내용의 agent_id 로 판별한다 — hooks/pre-commit
+# 참고) 이 정규화로도 괜찮지만, 번들 파일(agents/<name>)은 다르다 —
+# `bundle-notify.sh` 가 원장의 agent_id 로부터 파일명을 **다시 계산해서**
+# 찾는다. 서로 다른 두 agent_id 가 이름 하나에 부딪히면, 나중에 쓰는 쪽이
+# 먼저 쓴 쪽의 파일을 **통째로 덮어써 버린다** — 파일이 하나뿐이므로
+# "이름으로 다시 찾지 않는다"는 원칙만으로는 이 WRITE 충돌을 못 막는다
+# (review 재현, 양방향: A 는 도는 중인데 B 가 이름을 공유해 끝나면 B 의
+# 미검증이 A 의 "도는 중" 상태에 가려 사라지거나, 반대로 B 의
+# `SubagentStart` 가 A 의 sealed_at 을 지워 A 의 완료·미검증 기록이
+# 사라진다).
+#
+# 그래서 파일명을 raw agent_id 에서 **주입적으로**(사실상 충돌 없이)
+# 유도한다. git 은 이미 이 스크립트의 필수 의존성이므로(위에서
+# `git rev-parse --git-common-dir` 로 이미 확인) 새 의존성 없이
+# `git hash-object --stdin` 을 쓴다 — 저장소의 객체 포맷에 따라 고정
+# 길이(SHA-1 이면 40자, SHA-256 이면 64자)의 순수 16진수를 내므로 경로
+# 순회 위험이 없고(`tr` 정규화가 하던 일을 구조적으로 대신한다) 길이 제한
+# (`cut -c1-64`)도 필요 없다. `bundle-notify.sh` 는 같은 명령으로 같은
+# 이름을 다시 계산해 조회한다 — 두 곳이 정확히 같은 함수를 써야 하는
+# 이유는 예전 tr 정규화 때와 같다(Task 2 인터페이스 노트, 이제는 해시
+# 함수에 적용된다).
+#
+# 원문 `agent_id` 는 여전히 파일 **안**(4번째 필드)에도 남긴다 —
+# `pending.sh --bundle` 은 원장(ledger.tsv)의 agent_id 열(정규화되지 않은
+# 원문)과 비교하므로, 파일명(해시)이 아니라 이 필드를 디코드해 넘겨야 한다
+# (round 2 critical finding, 여전히 유효하다 — 해시로 바꿔도 파일명 자체를
+# 조회에 쓰면 안 된다는 사실은 그대로다).
+name="$(printf '%s' "$agent_id" | git hash-object --stdin 2>/dev/null)"
 [ -n "$name" ] || exit 0
 
 mkdir -p "$qdir/agents" 2>/dev/null || exit 0

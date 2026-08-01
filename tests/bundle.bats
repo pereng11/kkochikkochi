@@ -26,24 +26,31 @@ notify_run() {
   | bash "$PLUGIN_ROOT/scripts/bundle-notify.sh"
 }
 
+# scripts/seal-bundle.sh 와 정확히 같은 함수로 파일명을 계산한다(round 4 —
+# 파일명은 이제 raw agent_id 의 해시다, tr 정규화가 아니다). 두 곳이
+# 어긋나면 이 테스트 스위트 자체가 조용히 거짓을 증명하게 된다.
+bundle_file() {  # $1 = raw agent_id -> agents/<hash> 경로
+  echo "$(qdir)/agents/$(printf '%s' "$1" | git hash-object --stdin)"
+}
+
 # stub_ledger_line 은 tests/helper.bash 에 있다 (Task 4 Step 2).
 
 @test "SubagentStart 가 번들 파일을 만든다" {
   seal_run start aaa11 general-purpose
-  [ -f "$(qdir)/agents/aaa11" ]
+  [ -f "$(bundle_file aaa11)" ]
 }
 
 @test "SubagentStop 이 봉인 시각을 채운다" {
   seal_run start aaa11 general-purpose
   seal_run stop aaa11 general-purpose
-  run cut -f3 "$(qdir)/agents/aaa11"
+  run cut -f3 "$(bundle_file aaa11)"
   [ -n "$output" ]
 }
 
 @test "SubagentStart 없이 SubagentStop 만 와도 봉인한다" {
   seal_run stop aaa11 general-purpose
-  [ -f "$(qdir)/agents/aaa11" ]
-  run cut -f3 "$(qdir)/agents/aaa11"
+  [ -f "$(bundle_file aaa11)" ]
+  run cut -f3 "$(bundle_file aaa11)"
   [ -n "$output" ]
 }
 
@@ -144,15 +151,16 @@ notify_run() {
 
 @test "정규화가 필요한 원문 agent_id 도 --bundle 조회가 왕복한다 (Critical 수정 회귀)" {
   # 원장의 agent_id 열은 원문 그대로다(hooks/pre-commit 은 정규화하지
-  # 않는다). 파일명은 정규화(마침표·슬래시·콜론이 밑줄로 바뀐다)되지만,
-  # bundle-notify.sh 는 파일 안의 원문 필드를 디코드해서 조회해야 한다 —
-  # 파일명(정규화된 값)을 그대로 넘기면 이 테스트가 실패한다.
+  # 않는다). 파일명은 이제 해시(주입적)지만, bundle-notify.sh 는 여전히
+  # 파일 안의 원문 필드를 디코드해서 pending.sh --bundle 에 넘겨야 한다 —
+  # 원장의 agent_id 열과 비교되는 값이기 때문이다.
   raw='sess.1/agent:9'
   printf 'C1\n' > c.ts
   stub_ledger_line c.ts "$raw"
   seal_run stop "$raw" general-purpose
-  # 파일명은 정규화됐는지 확인한다(경로 순회 방지가 여전히 살아있다).
-  [ -f "$(qdir)/agents/sess_1_agent_9" ]
+  # 파일명이 raw agent_id 의 해시인지 확인한다(경로 순회 방지가 여전히
+  # 살아있다 — 해시는 항상 순수 16진수다).
+  [ -f "$(bundle_file "$raw")" ]
   run notify_run
   [ "$status" -eq 0 ]
   ctx="$(printf '%s' "$output" | jq -r '.hookSpecificOutput.additionalContext')"
@@ -161,13 +169,13 @@ notify_run() {
 
 @test "agent_type 에 탭이 있어도 sealed 판정이 깨지지 않는다 (파일 포맷 강건성)" {
   seal_run start aaa11 $'evil\tinjected'
-  run cut -f3 "$(qdir)/agents/aaa11"
+  run cut -f3 "$(bundle_file aaa11)"
   [ -z "$output" ]
 }
 
 @test "agent_type 에 개행이 있어도 sealed 판정이 깨지지 않는다 (파일 포맷 강건성)" {
   seal_run start aaa11 $'evil\nmore'
-  run cut -f3 "$(qdir)/agents/aaa11"
+  run cut -f3 "$(bundle_file aaa11)"
   [ -z "$output" ]
 }
 
@@ -238,6 +246,140 @@ write_legacy_agent_file() {  # $1 = sanitized name, $2 = agent_type, $3 = sealed
   run notify_run
   [ "$status" -eq 0 ]
   [ -n "$output" ]
+  ctx="$(printf '%s' "$output" | jq -r '.hookSpecificOutput.additionalContext')"
+  [[ "$ctx" == *"c.ts"* ]]
+}
+
+# ── round 4: `sanitize()`(tr 정규화)는 처음부터 충돌하도록 설계돼 있었다 ──
+#
+# `tr -c 'A-Za-z0-9_-' '_' | cut -c1-64` 는 문자 충돌("a.b"와 "a/b"가 둘 다
+# a_b 로)과 자름 충돌(64바이트를 넘는 임의의 두 id)을 구조적으로 만든다.
+# round 3 는 그 정규화의 산출물(파일명)로 agents/<name> 을 다시 찾는
+# 방식으로 "아직 도는 중" 판정을 고쳤는데, 그러면 서로 다른 두 agent_id 가
+# 이름 하나에 부딪힐 때 **WRITE 충돌**이 그대로 남는다 — 나중에 쓰는 쪽이
+# 먼저 쓴 쪽의 파일을 통째로 덮어쓴다. 이번 라운드는 파일명을 raw agent_id
+# 의 해시(주입적)로 바꿔 이 WRITE 충돌 자체를 구조적으로 없앴다. 아래
+# 네 가지가 review 가 요구한 불변식이다.
+
+@test "invariant 1(방향 1) — 도는 A(a.b) 가 끝난 B(a/b) 의 미검증 요구를 삼키지 않는다" {
+  # review 재현: raw_A 는 도는 중, raw_B 는 끝나서 미검증 원장 줄을 남겼다.
+  # B 는 자기 seal-bundle 이벤트가 없다(원장에만 흔적) — 그래야 폴백의
+  # 이름 기반 조회가 실제로 시험대에 오른다(sealed 루프가 자기 파일을
+  # 직접 찾아 먼저 잡아버리면 폴백까지 가지 않는다). tr 정규화 아래서는
+  # tr("a.b") == tr("a/b") == "a_b" 라서, B 의 폴백 조회가 A 가 쓴 파일을
+  # 찾아 A 의 "도는 중" 상태를 빌려 B 를 조용히 제외시켰다.
+  raw_A='a.b'
+  raw_B='a/b'
+  printf 'C1\n' > c.ts
+  stub_ledger_line c.ts "$raw_B"
+  seal_run start "$raw_A" general-purpose
+  run notify_run
+  [ "$status" -eq 0 ]
+  [ -n "$output" ]
+  ctx="$(printf '%s' "$output" | jq -r '.hookSpecificOutput.additionalContext')"
+  [[ "$ctx" == *"c.ts"* ]]
+}
+
+@test "invariant 1(방향 2) — 나중에 시작한 B(a/b) 가 먼저 끝난 A(a.b) 의 미검증 기록을 지우지 않는다" {
+  # review 재현(반대 방향): A 가 먼저 끝나 미검증을 남긴다. 그 뒤 B 가 실제로
+  # 시작한다. tr 정규화 아래서는 B 의 SubagentStart 가 A 와 같은 파일
+  # (agents/a_b) 을 덮어써 A 의 sealed_at 을 지워버리고, A 의 완료·미검증
+  # 기록이 사라졌다.
+  #
+  # A 는 자기 파일을 직접 갖고 있어(sealed, 디코드 가능) 상세 루프가 A 를
+  # 잡는다 — 그 메시지는 파일 경로가 아니라 `<agent_type> (<agent_id>) —
+  # N 개 변경` 형식이므로, 여기서는 "c.ts" 대신 raw_A 자체가 나타나는지
+  # 확인한다.
+  raw_A='a.b'
+  raw_B='a/b'
+  printf 'C1\n' > c.ts
+  stub_ledger_line c.ts "$raw_A"
+  seal_run stop "$raw_A" general-purpose
+  seal_run start "$raw_B" general-purpose
+  run notify_run
+  [ "$status" -eq 0 ]
+  ctx="$(printf '%s' "$output" | jq -r '.hookSpecificOutput.additionalContext')"
+  [[ "$ctx" == *"$raw_A"* ]]
+  [[ "$ctx" != *"$raw_B"* ]]
+}
+
+@test "invariant 1 — 충돌하는 두 raw agent_id 는 서로 다른 파일에 저장된다 (write-side 저수준 확인)" {
+  raw_A='a.b'
+  raw_B='a/b'
+  seal_run start "$raw_A" general-purpose
+  seal_run stop "$raw_B" general-purpose
+  file_A="$(bundle_file "$raw_A")"
+  file_B="$(bundle_file "$raw_B")"
+  [ "$file_A" != "$file_B" ]
+  [ -f "$file_A" ]
+  [ -f "$file_B" ]
+  run cut -f3 "$file_A"
+  [ -z "$output" ]   # A 는 여전히 도는 중이다 — B 가 덮어쓰지 않았다
+  run cut -f3 "$file_B"
+  [ -n "$output" ]   # B 는 봉인됐다
+}
+
+@test "invariant 2 — 아직 도는 번들은 절대 요구되지 않는다 (구버전 3필드 포맷 포함, 회귀 아님 — round 3 커버리지 재확인)" {
+  # 이 불변식은 이미 "구버전 3필드 포맷의 봉인 안 된 번들은 요구되지
+  # 않는다" 테스트가 고정한다(위, round 3). 여기서는 **현재(해시) 포맷**의
+  # 도는 번들도 여전히 조용한지 한 번 더 명시적으로 확인한다 — round 4 가
+  # 파일명 계산 방식을 바꿨으므로, "현재 포맷 + 현재 이름"의 기본 경로가
+  # 깨지지 않았는지가 별도로 필요하다.
+  raw='ddd44'
+  printf 'C1\n' > c.ts
+  stub_ledger_line c.ts "$raw"
+  seal_run start "$raw" general-purpose
+  run notify_run
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "invariant 3 — 충돌하는 두 raw agent_id 가 둘 다 끝나서 미검증이면 둘 다 요구된다" {
+  raw_A='a.b'
+  raw_B='a/b'
+  printf 'C1\n' > c.ts; printf 'D1\n' > d.ts
+  stub_ledger_line c.ts "$raw_A"
+  stub_ledger_line d.ts "$raw_B"
+  seal_run stop "$raw_A" general-purpose
+  seal_run stop "$raw_B" general-purpose
+  run notify_run
+  [ "$status" -eq 0 ]
+  ctx="$(printf '%s' "$output" | jq -r '.hookSpecificOutput.additionalContext')"
+  [[ "$ctx" == *"$raw_A"* ]]
+  [[ "$ctx" == *"$raw_B"* ]]
+}
+
+# invariant 4 는 "이름은 맞는데(정확한 해시 파일) 내용(4번째 필드)을 디코드할
+# 수 없는" 경우를 시험한다 — round 3 가 다루던 "이름이 옛 포맷"과는 다른
+# 축이다: 여기서는 파일을 정확히 찾지만 그 안의 agent_id 필드가 깨져 있다.
+write_corrupt_agent_file() {  # $1 = raw agent_id, $2 = agent_type, $3 = sealed_at(빈 문자열 가능)
+  local h
+  h="$(printf '%s' "$1" | git hash-object --stdin)"
+  mkdir -p "$(qdir)/agents"
+  # 4번째 필드가 유효한 JSON 문자열이 아니다 — decode() 의 jq -r '.' 가
+  # 실패한다. 파일명(해시)은 올바르므로 이름 기반 조회는 이 파일을 정확히
+  # 찾는다 — "정체를 판별할 수 없다"는 오직 내용에서만 온다.
+  printf '%s\t%s\t%s\t%s\n' "$2" "2026-07-30T00:00:00Z" "$3" "not-valid-json" \
+    > "$(qdir)/agents/$h"
+}
+
+@test "invariant 4 — 내용을 디코드할 수 없어도 도는 중이면 요구되지 않는다" {
+  raw='ccc33'
+  printf 'C1\n' > c.ts
+  stub_ledger_line c.ts "$raw"
+  write_corrupt_agent_file "$raw" general-purpose ""
+  run notify_run
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "invariant 4 — 내용을 디코드할 수 없어도 봉인돼 있으면 명시적으로(폴백으로) 요구된다" {
+  raw='ccc33'
+  printf 'C1\n' > c.ts
+  stub_ledger_line c.ts "$raw"
+  write_corrupt_agent_file "$raw" general-purpose "2026-07-30T00:05:00Z"
+  run notify_run
+  [ "$status" -eq 0 ]
   ctx="$(printf '%s' "$output" | jq -r '.hookSpecificOutput.additionalContext')"
   [[ "$ctx" == *"c.ts"* ]]
 }
