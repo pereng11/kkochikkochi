@@ -30,6 +30,9 @@ install_push_hook() {
 # 덮어쓰면 오히려 틀린다. 대신 남는 이름 공간을 하나 새로 만든다 — --remotes
 # 는 refs/remotes/ 아래 어떤 이름이든 다 본다.
 run_push_hook() {  # $1 = remote sha, $2 = local sha
+  # 매 호출마다 지우고 나서(필요하면) 다시 만든다 — 안 지우면 한 테스트
+  # 안에서 두 번째 호출이 첫 번째 호출의 제외를 그대로 물려받는다.
+  git update-ref -d refs/remotes/_run_push_hook_sim/remote 2>/dev/null
   if commit_sha="$(git rev-parse -q --verify "$1^{commit}" 2>/dev/null)"; then
     git update-ref refs/remotes/_run_push_hook_sim/remote "$commit_sha" 2>/dev/null
   fi
@@ -337,6 +340,12 @@ setup_origin() {   # bare origin 을 만들고 현재 HEAD 를 main 으로 올�
   git remote add origin "$ORIGIN"
   git push -q origin HEAD:refs/heads/main
   git fetch -q origin
+  # epoch 은 이 함수 안의 push 를 성공시키려고만 잠깐 필요했다(주석 참고).
+  # 남겨 두면 "리모트 기준으로 만든 새 브랜치의 기준점 커밋은 검사에서
+  # 빠진다" 가 --remotes 가 아니라 epoch 만으로도 통과해 --remotes 제외
+  # 자체를 검증하지 못하는 채로 초록이 된다(실측 확인) — 그래서 여기서
+  # 지운다.
+  rm -f "$(qdir)/epoch"
 }
 
 @test "pull 로 들어온 남의 커밋은 검사에서 빠진다" {
@@ -411,6 +420,10 @@ setup_origin() {   # bare origin 을 만들고 현재 HEAD 를 main 으로 올�
   # 죽은 줄 하나가 rev-list 를 128 로 죽이면 fail-closed 가 모든 push 를
   # 어떤 퀴즈로도 못 푸는 채로 영구 차단한다 (D00/D42 가 금지하는 모양)
   [ "$status" -eq 0 ]
+  # 조용히 버리지 않고 경고했는지 직접 확인한다 — "16진수" 가 아니라
+  # "사라진 객체" 로 특정해, 아래 16진수 테스트와 서로의 메시지로
+  # 통과하지 못하게 한다.
+  [[ "$output" == *"사라진 객체"* ]]
 }
 
 @test "epoch 의 16진수 아닌 줄은 rev-list 인자로 새지 않는다" {
@@ -443,6 +456,10 @@ setup_origin() {   # bare origin 을 만들고 현재 HEAD 를 main 으로 올�
   # HEAD 가 인자로 새면 범위 자체가 사라져 미검증 내용을 건너뛴다
   [ "$status" -ne 0 ]
   [[ "$output" == *"evil.ts"* ]]
+  # "--all"·"HEAD" 둘 다 조용히 버리지 않고 경고했는지 확인한다 — "사라진
+  # 객체" 가 아니라 "16진수" 로 특정해, 위 사라진 객체 테스트와 서로의
+  # 메시지로 통과하지 못하게 한다.
+  [[ "$output" == *"16진수"* ]]
 }
 
 @test "epoch 을 읽을 수 없으면 막고 --no-verify 를 안내한다" {
