@@ -142,6 +142,7 @@ epoch 은 그 중복을 늘리지 않는다. **쓰기는 `install.sh` 에만, �
 | `PreToolUse` 출력 | `hookSpecificOutput.{permissionDecision: allow\|deny\|ask, permissionDecisionReason}` | `stamp-agent.sh:88-95` 의 `deny()` | 와이어가 동일 — 그대로 동작 |
 | `Stop`·`SubagentStop`·`SubagentStart`·`PreToolUse` | `cwd` 가 전부 required | `stop-gate.sh`·`seal-bundle.sh`·`bundle-notify.sh` 의 cwd 처리 | 그대로 동작 |
 | 출력 스키마 | 전부 `additionalProperties: false` | 우리 JSON 에 잉여 키 없음 | 맞다 |
+| `config` 스키마가 `Stop`·`SubagentStart`·`SubagentStop` 에 `matcher` 키를 허용하는가 | `codex-rs/config/src/hook_config.rs`: `HookEventsToml` 의 11개 이벤트가 전부 균일하게 `Vec<MatcherGroup>` 이고, `MatcherGroup { matcher: Option<String>, hooks: Vec<HookHandlerConfig> }` 의 `matcher` 는 `#[serde(default)]` — `deny_unknown_fields` 는 최상위 `HooksFile`(`description`·`hooks`)에만 있고 `MatcherGroup` 에는 없다 | 루트 `hooks.json` 이 `Stop`/`SubagentStart`/`SubagentStop` 에도 `matcher:"*"` 를 씀 | 문제없이 파싱된다 — 안 쓰일 뿐이고, 거부돼 매니페스트 전체(`PreToolUse` 핸드셰이크 포함)가 로드 실패하는 일은 없다 |
 
 ### 5.2 이벤트 매핑
 
