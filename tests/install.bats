@@ -260,6 +260,51 @@ FAKEMV
   ! grep -q 'KKOCHIKKOCHI-HOOK-v1' "$(hooksdir)/pre-commit.kkochikkochi-chained"
 }
 
+@test "install 이 pre-push 도 설치한다" {
+  bash "$PLUGIN_ROOT/scripts/install.sh" install
+  [ -x "$(hooksdir)/pre-push" ]
+  run grep -c 'KKOCHIKKOCHI-HOOK-v1' "$(hooksdir)/pre-push"
+  [ "$output" -ge 1 ]
+}
+
+@test "pre-push 가 없으면 status 가 3(낡음)을 낸다" {
+  bash "$PLUGIN_ROOT/scripts/install.sh" install
+  rm -f "$(hooksdir)/pre-push"
+  run bash "$PLUGIN_ROOT/scripts/install.sh" status
+  [ "$status" -eq 3 ]
+}
+
+@test "pre-push 가 낡으면 status 가 3 을 낸다" {
+  bash "$PLUGIN_ROOT/scripts/install.sh" install
+  printf '#!/bin/sh\n# KKOCHIKKOCHI-HOOK-v1\nexit 0\n' > "$(hooksdir)/pre-push"
+  chmod +x "$(hooksdir)/pre-push"
+  run bash "$PLUGIN_ROOT/scripts/install.sh" status
+  [ "$status" -eq 3 ]
+}
+
+@test "둘 다 최신이면 status 가 0 을 낸다" {
+  bash "$PLUGIN_ROOT/scripts/install.sh" install
+  run bash "$PLUGIN_ROOT/scripts/install.sh" status
+  [ "$status" -eq 0 ]
+}
+
+@test "uninstall 이 둘 다 지운다" {
+  bash "$PLUGIN_ROOT/scripts/install.sh" install
+  bash "$PLUGIN_ROOT/scripts/install.sh" uninstall
+  [ ! -e "$(hooksdir)/pre-commit" ]
+  [ ! -e "$(hooksdir)/pre-push" ]
+}
+
+@test "기존 pre-push 훅도 체이닝한다" {
+  mkdir -p "$(hooksdir)"
+  printf '#!/bin/sh\necho theirs-push\nexit 0\n' > "$(hooksdir)/pre-push"
+  chmod +x "$(hooksdir)/pre-push"
+  bash "$PLUGIN_ROOT/scripts/install.sh" install
+  [ -x "$(hooksdir)/pre-push.kkochikkochi-chained" ]
+  run cat "$(hooksdir)/pre-push.kkochikkochi-chained"
+  [[ "$output" == *"theirs-push"* ]]
+}
+
 @test "ln 이 실패하면 예전 방식(이동)으로 물러나 설치를 계속한다" {
   printf '#!/bin/sh\necho ORIGINAL\nexit 0\n' > "$(hooksdir)/pre-commit"; chmod +x "$(hooksdir)/pre-commit"
   # BATS_TEST_TMPDIR 는 bats-core 1.5 이전엔 정의되지 않는다(Ubuntu 22.04
