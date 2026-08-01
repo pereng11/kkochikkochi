@@ -65,6 +65,17 @@ Claude Code 에서는 객관식이 `AskUserQuestion` 으로 클릭 선택된다.
 
 판별 순서는 **실제 터미널(TTY) → 핸드셰이크 → 알려진 환경변수**다. 훅의 fd 1/2 에 진짜 터미널이 붙어 있으면 사람이 지금 손으로 치고 있다는 뜻이므로 다른 어떤 신호보다 우선해 통과시킨다([D41](docs/DECISIONS.md)). 그다음이 핸드셰이크, 그다음이 직접 관찰한 환경변수(`CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`)다. 그래도 애매하면 통과시킨다.
 
+서브에이전트가 커밋할 때는 층이 하나 더 붙는다. 서브에이전트는 사람에게 물을 수 없어서
+`pre-commit` 에서 막으면 통과할 방법이 없다. 그래서 막지 않고 **원장(`ledger.tsv`)에 적어
+두고** 뒤에서 강제한다.
+
+| 트리거 | 하는 일 |
+|---|---|
+| `SubagentStart` / `SubagentStop` | 번들을 열고 봉인한다 (`agents/<hash>`) |
+| `PostToolUse` (Claude Code `Task` / Codex `spawn_agent`) | 봉인된 번들의 검증을 부모 에이전트에게 요구한다 |
+| `Stop` | 미검증이 남은 채로 턴이 끝나는 것을 막는다 |
+| git `pre-push` | 최종 경계. Stop 은 Esc 로 빠져나갈 수 있다 |
+
 ## 설치
 
 ### Claude Code
@@ -120,12 +131,18 @@ bash scripts/install.sh status
 - 위 작업이 충돌해 사용자가 직접 `git commit` 으로 마무리할 때 — 진행 중인 merge/cherry-pick/revert/rebase 마커(`MERGE_HEAD` 등)가 있으면 그 커밋도 대상에서 제외한다
 - `git commit --amend` 로 **메시지만** 고칠 때 — 워크트리 내용이 HEAD 와 같아 커밋될 변경분이 없기 때문이다. **내용을 더 얹는 amend 는 그 추가분만큼 게이트 대상이다** — 검증 없이 슬쩍 끼워 넣는 경로를 막기 위해서다
 - 게이트 자체에 문제가 생겼을 때 (fail-open)
+- `git pull` 로 들어온 남의 커밋, 원격 브랜치에서 분기할 때 딸려온 기준점, `git clone` 해 온 이력 — 어느 리모트 추적 ref 에서든 도달 가능하면 `pre-push` 가 보지 않는다 ([D47](docs/DECISIONS.md))
+- 게이트를 설치하기 전의 로컬 이력 — 설치 시점의 ref 팁을 `.git/quiz-gate/epoch` 에 적어 두고 그보다 앞선 것은 보지 않는다. 게이트가 볼 수 있었던 적이 없는 커밋이다
 
 ## 어떻게 기억하는가
 
 파일 내용의 blob SHA 를 `.git/quiz-gate/covered.tsv` 에 `(SHA, 경로, pass_id)` 형태로 기록한다. 파일을 한 글자라도 고치면 SHA 가 바뀌어 그 파일만 다시 물어본다. 한 번 통과한 변경은 여러 커밋으로 나눠 올려도 다시 묻지 않는다.
 
 문답 전문은 `.git/quiz-gate/passes/<pass_id>.json` 에 1건 1파일로 남는다 — 검증에는 쓰이지 않고 감사 기록용이다. 에이전트 핸드셰이크는 `.git/quiz-gate/agent-session` 에 남는다.
+
+서브에이전트가 만든 미검증 변경은 `.git/quiz-gate/ledger.tsv` 에, 번들의 시작·봉인 시각은
+`.git/quiz-gate/agents/` 에 남는다. 게이트가 이 저장소에 설치된 시점의 ref 팁은
+`.git/quiz-gate/epoch` 에 남고, `pre-push` 가 그보다 앞선 이력을 검사에서 뺄 때 쓴다.
 
 기록은 `.git/` 안에만 있고 절대 커밋되지 않는다.
 
@@ -153,9 +170,14 @@ v2 마이그레이션 중 실측으로 확인된 것들이다. 추측이 아니�
 | **경로에 개행 문자가 있으면 `pre-commit` 은 경고와 함께 통과시키지만 `pre-push` 는 막는다** | `--raw -z` 스트림을 셸에서 다루려면 NUL 을 개행으로 바꿔야 하는데, 경로 안의 진짜 개행이 그 짝짓기를 깨뜨린다. `pre-commit` 은 어긋난 채로 판정을 이어가지 않고 **경고와 함께 커밋 전체를 통과시킨다**(fail-open, D42) — 이해와 무관한 이유로 커밋을 영구히 막지 않기 위해서다. `record-pass.sh` 는 같은 상황에서 쓰레기 기록을 남기지 않으려고 기록을 거부한다. `pre-push` 는 정반대로 판단한다: 이 층은 최종 경계라 조용히 열리는 것 자체가 구멍이므로 **fail-closed** 한다 — `covered.tsv` 를 채울 방법이 없으니(`pending.sh` 도 같은 스트림을 형식 오류로 거부한다) 어떤 퀴즈로도 풀 수 없고, 대신 `git push --no-verify` 를 거부 메시지에 안내한다 |
 | **`jq` 가 없으면 게이트가 열린다** | 퀴즈 통과를 기록하는 `record-pass.sh` 가 `jq` 를 필요로 하므로, `jq` 없이 게이트만 켜 두면 통과할 방법이 없는 채로 커밋이 막힌다. 설치기가 `jq` 없는 환경에서 설치를 거부하고, 설치 이후에 사라진 경우에는 훅이 경고와 함께 통과시킨다 |
 | **git 훅은 `git clone` 을 따라가지 않는다** | `.git/hooks/` 는 git 이 추적하지 않는다. 저장소를 새로 clone 하면 게이트가 없는 상태로 시작하고, 그 저장소에서 다시 설치해야 한다(에이전트가 자동으로 함) |
-| **`record-pass.sh` 의 `pass_id` 는 초 단위 해상도다** | 같은 초 안에 통과가 두 번 기록되면 나중 것이 먼저 것의 문답 전문(`passes/<pass_id>.json`)을 덮어쓴다. `covered.tsv` 는 계속 추가되기만 하므로 커버리지 자체는 안전하지만, 감사 기록은 하나만 남는다 |
 | **신뢰 경계는 보안이 아니라 규율 장치다** | 에이전트가 퀴즈를 건너뛰고 `record-pass.sh` 를 직접 호출하는 것을 기술적으로 막지 않는다. 방어선은 빈 문항·공백 답변 거부와 사후 감사뿐이다 |
 | **기록은 자동으로 정리되지 않는다** | `covered.tsv` 와 `passes/*.json` 은 커밋마다 계속 쌓인다. TTL 이나 자동 트림은 범위 밖이다([D18](docs/DECISIONS.md)) |
+| **`pre-push` 는 사람이 손으로 만든 커밋도 막는다** | 이 층은 출처를 보지 않는다 — 커밋 시점의 TTY·핸드셰이크 신호를 사후에 복원할 방법이 없기 때문이다. `pre-commit` 이 통과시킨 사람 커밋도 push 때는 퀴즈를 요구한다. 게이트 설치 이전의 이력과 리모트에서 온 것은 [D47](docs/DECISIONS.md) 로 빠진다 |
+| **`cherry-pick`·squash 로 가져온 남의 커밋은 제외되지 않는다** | 새 SHA 라 도달성 판정에 안 걸린다. 제대로 하려면 patch-id 를 리모트 전체에 돌려야 하는데 push 마다 비용이 크다. **갇히지는 않는다** — 막히면 퀴즈로 풀린다. `pre-commit` 은 `CHERRY_PICK_HEAD` 를 보고 이미 통과시키므로 두 층의 판단이 갈리는 지점이다 |
+| **epoch 없는 버전에서 업그레이드하면 미검증 커밋이 1회 면제된다** | `epoch` 은 파일이 없을 때만 쓰이므로, 이 기능 이전 버전을 쓰던 저장소는 업그레이드 시점의 ref 팁이 epoch 이 된다. 그때까지 쌓인 미검증 커밋은 한 번 면제된다. 1회성이며 그 뒤로는 안정 상태다 |
+| **리모트 추적 ref 가 stale 하면 이미 리모트에 있는 커밋도 검사한다** | `git fetch` 하면 풀린다. 안전 방향이라 그대로 둔다 |
+| **`install.sh uninstall` 은 검증 이력을 함께 지운다** | `.git/quiz-gate/` 를 통째로 지운다. `passes/*.json`(`/kk-log` 가 읽는 감사 기록)은 복구되지 않는다. 무엇을 지웠는지 stderr 에 알린다 |
+| **워크트리는 `quiz-gate` 를 공유한다** | 상태가 `--git-common-dir` 아래 있어 한 워크트리에서 `uninstall` 하면 전부 사라진다. 훅(`.git/hooks/`)도 공유되므로 동작 자체는 일관된다 |
 
 설계 근거는 [docs/DECISIONS.md](docs/DECISIONS.md) 참조. v2 아키텍처 전환 배경은 [docs/superpowers/specs/2026-07-30-kkochikkochi-v2-hybrid-design.md](docs/superpowers/specs/2026-07-30-kkochikkochi-v2-hybrid-design.md).
 

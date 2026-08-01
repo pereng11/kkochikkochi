@@ -5,7 +5,14 @@
 
 ## [Unreleased]
 
+### Added
+- Codex 매니페스트(`hooks.json`)가 `Stop`·`PostToolUse`·`SubagentStart`·`SubagentStop` 을 등록한다. 서브에이전트 생성 도구 이름은 `Task` 가 아니라 `spawn_agent` 다
+- `install.sh install` 이 설치 시점의 ref 팁을 `.git/quiz-gate/epoch` 에 남긴다. 파일이 없을 때만 쓰므로 플러그인 업데이트가 게이트를 리셋하지 않는다
+- `install.sh uninstall` 이 `.git/quiz-gate/` 를 통째로 지운다. 무엇을 지웠는지 stderr 에 알린다
+
 ### Fixed
+- **`pre-push` 가 `git pull` 로 들어온 남의 커밋, 원격 브랜치 분기점, `clone` 해 온 이력을 검사 대상으로 잡던 문제.** 이제 "사용자가 에이전트로 작업한 코드"만 본다 — 어느 리모트 추적 ref 에서든 도달 가능한 커밋과, 게이트 설치 이전의 로컬 이력이 전부 빠진다. 새 브랜치 경로는 이미 옳았고 기존 브랜치 경로만 틀렸다 ([D47](docs/DECISIONS.md))
+- README 한계 표의 `pass_id` 초 해상도 항목이 이미 고쳐진 문제(`96e801c`)를 계속 적고 있던 것
 - **IDE·GUI git 클라이언트에서 만든 커밋이 실제로는 막히던 문제.** README 는 막지 않는다고 약속했지만, 핸드셰이크가 매 Bash 호출마다 갱신돼 에이전트가 이 저장소에서 무엇이든 하는 동안 들어온 **모든** 커밋이 에이전트 커밋으로 판정됐다. IDE 는 git 을 pty 가 아니라 파이프로 띄우므로 TTY 구제도 닿지 않았다. 이제 핸드셰이크는 **커밋처럼 보이는 명령에서만** 남는다([D44](docs/DECISIONS.md)). `FRESH_SECS` 는 그에 맞춰 120초 → 600초
 - **스킬과 기록자가 낡은 `pending` 에 대해 서로 다른 파일 집합을 보던 문제.** `SKILL.md` 는 신선도 검사 없이 파일을 읽고 `record-pass.sh` 는 900초를 요구해서, 창이 지나면 사용자가 A 를 풀고 B 가 검증된 것으로 기록됐다. 규칙을 `scripts/pending.sh` 한 곳으로 옮기고 양쪽이 그것을 부르게 했다([D45](docs/DECISIONS.md))
 - **잘린 `pending` 줄에서 `record-pass.sh` 가 성공을 보고하던 문제** — 사용자는 통과했다는 말을 듣지만 커밋은 그대로 막혀 있었다. 이제 시끄럽게 거부한다
