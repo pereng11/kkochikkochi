@@ -78,7 +78,13 @@ SDK 타입 정의가 같은 것을 말한다.
 
 가장 가까운 자리가 `PostToolUse` + matcher `Task` 다. 서브에이전트가 끝나 결과가 부모로 돌아오는 순간 **부모 문맥에서** 발동하므로, 거기서는 `AskUserQuestion` 을 쓸 수 있다.
 
-밀어 넣는 방법은 `hookSpecificOutput.additionalContext` 다. 훅이 "이 번들에 미검증 변경이 있다, kkochikkochi 스킬을 실행해 검증하라"와 `agent_id` 를 넘긴다. 훅이 직접 퀴즈를 내지 않는다 — 훅에는 사람에게 묻는 채널이 없고 `timeout` 이 걸려 있다(§6).
+밀어 넣는 방법은 `hookSpecificOutput.additionalContext` 다. **`PostToolUse(Task)` 페이로드에는 `agent_id` 가 없다** — SDK 정의가 "Present only when the hook fires from inside a Task-spawned sub-agent; absent on the main thread" 라고 못 박고 있고, 이 훅은 부모 문맥에서 돈다. 그래서 `SubagentStop` 이 `agents/<agent_id>` 에 봉인 표시를 남기고, `PostToolUse` 는 그 표시를 디스크에서 읽어 어느 번들을 검증해야 하는지 안다.
+
+`SubagentStop` 이 `PostToolUse(Task)` 보다 먼저 도는 것에 기대지만, 그것이 어긋나도 안전하다 — **단, 이 순서를 어떻게 처리할지는 두 갈래로 나뉜다.**
+
+`agents/<agent_id>` 에 아예 기록이 없는 agent_id(예: `SubagentStart` 훅 자체가 발동하지 않은 경우)는 봉인 여부를 판단할 근거가 없으므로 "모른다"를 "안전한 쪽"으로 처리한다 — `PostToolUse` 는 원장에서 그 agent_id 몫을 찾아 즉시 요구한다.
+
+반대로 `agents/<agent_id>` 기록이 있는데 아직 `sealed_at` 이 비어 있는 경우(순서가 `SubagentStart` → `PostToolUse(Task)` → `SubagentStop` 로 뒤집혀, 서브에이전트가 아직 도는 중이라는 것을 `PostToolUse` 가 직접 알 수 있는 경우)는 **의도적으로 조용히 넘어간다.** 아직 일하는 중인 서브에이전트에게 검증부터 조르는 것은 순서가 틀렸다고 판단했다 — 반대급부로, 이번이 그 턴의 마지막 `PostToolUse(Task)` 라면(더 이상 부모 문맥이 도는 자리가 없다면) 이 번들은 부모에게 끝내 알려지지 않고 `Stop` 훅에만 맡겨진다. `Stop` 은 봉인 여부를 전혀 보지 않고 원장 전체의 미검증만 보므로(§3 표), 이 경우에도 턴 끝에서는 반드시 잡는다 — 다만 "일이 끝나자마자 부모 문맥에서" 대신 "턴이 끝날 때"로 검증 시점이 뒤로 밀린다. `tests/bundle.bats` 의 역순 테스트가 이 트레이드오프를 고정한다.
 
 ### `Stop` 훅과 무한 루프
 
@@ -111,7 +117,7 @@ SDK 타입 정의가 같은 것을 말한다.
 
 ```
 <common-dir>/quiz-gate/
-  ledger.tsv        blob_sha  path  agent_id  agent_type  commit_sha  at
+  ledger.tsv        blob_sha  path  agent_id  agent_type  at
   covered.tsv       (현행 유지) blob_sha  path  pass_id
   pending           (현행 유지) 단일 에이전트 경로 전용
   marker/main       agent_id 없는 Bash 호출
@@ -120,6 +126,8 @@ SDK 타입 정의가 같은 것을 말한다.
   passes/<pass_id>.json
   defer             있으면 유예 모드
 ```
+
+`commit_sha` 는 담지 않는다. `pre-commit` 은 커밋이 만들어지기 **전**에 도므로 그 값을 모른다. 필요도 없다 — `pre-push` 는 push 범위의 `git diff --raw` 를 `covered.tsv` 와 직접 대조하고, 원장은 번들 묶기와 `Stop` 판정에만 쓰인다.
 
 ### 마커를 `agent_id` 별로 쪼갠다
 
@@ -201,6 +209,25 @@ SDK 타입 정의가 같은 것을 말한다.
 | **`git merge` 는 여전히 우회한다** | 클린 병합은 `pre-merge-commit` 을 부른다. 그 훅을 설치하지 않는다. v2 한계표 그대로 |
 | **번들 이름표는 틀릴 수 있다** | 같은 워크트리에서 마커가 섞이면 `agent_id` 귀속이 틀린다. 검증 여부는 틀리지 않는다(§4) — 표시만 틀린다 |
 | **`pre-push` 에서는 퀴즈를 낼 수 없다** | push 는 보통 명령 하나이고 사람에게 묻는 채널이 없다. 거부하고 안내만 한다 |
+
+> **불변 조건: `stop-gate` 는 서브에이전트 생존 여부로 필터링하지 않는다.**
+> 위 "번들 이름표는 틀릴 수 있다" 는 최종 결과(검증 여부)만 놓고 보면 대가가
+> 이름표뿐이라고 말하지만, 그것이 성립하는 건 이 불변 조건 덕분이다.
+> `bundle-notify.sh` 는 아직 도는 중인 번들의 요구를 의도적으로 죽인다
+> (상세 루프 §, 폴백 § 둘 다 `sealed_at` 이 비어 있으면 continue 한다) —
+> 그래야 아직 안 끝난 작업에 검증을 요구해 서브에이전트를 갇히게 하지
+> 않는다. 그런데 이름표가 틀려 아직 끝난(그런데 아직 도는 다른 agent_id
+> 로 잘못 귀속된) 작업이 "도는 중"으로 오분류되면, `PostToolUse` 층은
+> 그 몫에 대해 조용히 입을 닫는다 — 정말로 끝난 일에 대한 요구가 사라진다.
+> 이것이 사고로 번지지 않는 유일한 이유는 `stop-gate.sh` 가 생존 여부를
+> 전혀 보지 않고 원장(`ledger.tsv`)의 미검증 전부를 턴 끝에 막기 때문이다
+> — `PostToolUse` 가 놓친 것을 `Stop` 이 반드시 다시 잡는다. 이 결합은
+> 지금은 암묵적이다. `Stop` 에 나중에 생존 필터가(예: "아직 도는 서브에이전트
+> 몫은 이번 턴에 요구하지 않는다") 들어오면, 번들 이름표 오류가 조용히
+> 새는 유일한 안전망까지 함께 사라진다 — §7 "유예 모드"가 이미 있는 것과는
+> 다른 종류의 구멍이다(유예는 사용자가 명시적으로 킨 것이고, 이건 이름표
+> 버그가 우연히 만든 것이다). `stop-gate` 를 건드릴 다음 사람은 이 줄을
+> 먼저 읽어야 한다.
 
 ## 11. 테스트 계획
 

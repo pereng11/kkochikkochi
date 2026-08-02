@@ -2,7 +2,13 @@
 # 퀴즈 통과를 기록한다.
 #
 # 사용법: echo "<transcript json>" | record-pass.sh
-# 종료:   0 = 기록됨 / 1 = 거부
+# 종료:   0 = 기록됨
+#         1 = 거부(이 스크립트 자체의 transcript 검증 실패, 또는
+#             pending.sh 가 "미검증 없음"이라고 답함)
+#         2 = 판정 불가 — pending.sh 가 원장/pending 을 읽지 못했다는
+#             뜻이고, 그 종료 코드를 그대로 물려받는다(아래 pending.sh
+#             호출부 참고). 1 과 뭉개면 "기록할 게 없었다"와 "판정 자체가
+#             안 됐다"를 호출자가 구별할 수 없다.
 #
 # 대상(SHA·경로)은 인자로 받지 않는다. 에이전트가 건네준 명령 문자열이나
 # 해시를 신뢰하지 않기 위해서다. 어느 집합을 검증 대상으로 볼지는
@@ -47,19 +53,32 @@ if jq -e '.questions[] | select(.format == "free")
   die "서술형 답변이 비어 있습니다"
 fi
 
-git_dir="$(git rev-parse --git-dir 2>/dev/null)" || die "git 저장소가 아닙니다"
-qdir="$git_dir/quiz-gate"
+git_common_dir="$(git rev-parse --git-common-dir 2>/dev/null)" || die "git 저장소가 아닙니다"
+qdir="$git_common_dir/quiz-gate"
 pending_file="$qdir/pending"
 
 # 대상 결정은 scripts/pending.sh 하나에만 있다 — 스킬(SKILL.md §1)도 같은
-# 스크립트를 부른다. 규칙을 여기 한 벌 더 두면 반드시 한쪽이 낡고, 그러면
-# 사용자가 A 를 풀었는데 B 가 검증된 것으로 기록된다. (D45)
+# 스크립트를 같은 인자로 부른다. 규칙을 여기 한 벌 더 두면 반드시 한쪽이
+# 낡고, 그러면 사용자가 A 를 풀었는데 B 가 검증된 것으로 기록된다. (D45)
 # 사유 메시지는 pending.sh 가 이미 stderr 에 냈으므로 그대로 물려받는다.
-pending="$(bash "$SCRIPT_DIR/pending.sh")" || exit 1
+#
+# 종료 코드도 그대로 물려받는다 — 뭉개지 않는다. pending.sh 는 "미검증
+# 없음"(1)과 "판정 불가"(2)를 서로 다른 코드로 낸다(스크립트 헤더 주석
+# 참고, review). 예전에는 여기서 `|| exit 1` 로 무엇이 됐든 1로 밀어버려서,
+# 원장이 실제로는 판정 불가(2)인데도 record-pass.sh 를 부르는 쪽에서 보면
+# "그냥 기록할 게 없었다"(1)와 구별할 수 없었다 — 종료 코드가 기계가 읽는
+# 유일한 신호인데, 그 신호가 이 스크립트를 한 번 거치는 순간 사라지는
+# 것이다.
+pending="$(bash "$SCRIPT_DIR/pending.sh" "$@")"
+pending_rc=$?
+[ "$pending_rc" -eq 0 ] || exit "$pending_rc"
 
 mkdir -p "$qdir/passes" || die "상태 디렉터리를 만들 수 없습니다"
 
-pass_id="p-$(date -u +%Y%m%d-%H%M%S)"
+# 초 해상도만으로는 같은 초에 통과한 두 건이 같은 pass_id 를 받아, mv 가
+# 앞 건의 감사 기록을 덮는다. covered.tsv 는 그대로 그 id 를 가리키므로
+# 남의 문답을 가리키는 라인이 남는다. 병렬 서브에이전트에서 실제로 일어난다.
+pass_id="p-$(date -u +%Y%m%d-%H%M%S)-$$"
 
 # 문답 전문을 먼저 저장하고, 그것이 안전하게 자리잡은 뒤에만 covered.tsv 에
 # 커버리지를 기록한다. 순서를 반대로 하면(커버리지 라인을 먼저 쓰면)

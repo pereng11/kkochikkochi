@@ -1,5 +1,5 @@
 {
-  "description": "KkochiKkochi — records an agent handshake so the git pre-commit gate knows this commit came from an agent.",
+  "description": "KkochiKkochi — records an agent handshake so the git pre-commit gate knows this commit came from an agent, and blocks the turn from ending while subagent commits remain unverified.",
   "hooks": {
     "PreToolUse": [
       {
@@ -8,6 +8,54 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/stamp-agent.sh\" --agent claude-code",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/stop-gate.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/bundle-notify.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/seal-bundle.sh\" --event start",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/seal-bundle.sh\" --event stop",
             "timeout": 5
           }
         ]

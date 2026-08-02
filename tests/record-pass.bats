@@ -9,8 +9,6 @@ record() {  # $1 = transcript JSON
   echo "$1" | bash "$PLUGIN_ROOT/scripts/record-pass.sh"
 }
 
-qdir() { echo "$(git rev-parse --git-dir)/quiz-gate"; }
-
 VALID='{"questions":[{"axis":"facts","q":"무엇이 바뀌었나?","evidence":"c.ts:1","format":"choice","answer":"A","correct":"A","attempts":1,"gave_up":false}]}'
 
 @test "통과를 기록하면 covered.tsv 에 라인이 생긴다" {
@@ -195,4 +193,52 @@ VALID='{"questions":[{"axis":"facts","q":"무엇이 바뀌었나?","evidence":"c
   grep -q "^${NULL_SHA}"$'\t'"old2.ts"$'\t' "$(qdir)/covered.tsv"
   run commit_as_human -m x
   [ "$status" -eq 0 ]
+}
+
+@test "같은 초에 두 건이 통과해도 감사 기록이 덮이지 않는다" {
+  printf 'C1\n' > c.ts; git add c.ts
+  id1="$(record_pass)"
+  [ -n "$id1" ]
+
+  printf 'D1\n' > d.ts; git add d.ts
+  id2="$(record_pass)"
+  [ -n "$id2" ]
+
+  [ "$id1" != "$id2" ]
+  [ -f "$(qdir)/passes/$id1.json" ]
+  [ -f "$(qdir)/passes/$id2.json" ]
+  [ "$(find "$(qdir)/passes" -name '*.json' | wc -l | tr -d ' ')" = "2" ]
+}
+
+@test "pass_id 에 프로세스 식별자가 붙는다" {
+  printf 'C1\n' > c.ts; git add c.ts
+  run record_pass
+  [ "$status" -eq 0 ]
+  # p-<8자리>-<6자리>-<pid>
+  [[ "$output" =~ ^p-[0-9]{8}-[0-9]{6}-[0-9]+$ ]]
+}
+
+# ── pending.sh 의 종료 코드를 뭉개지 않고 그대로 물려받는다 ──
+#
+# review: 예전에는 `pending="$(... pending.sh ...)" || exit 1` 로 pending.sh
+# 가 무엇을 반환하든 record-pass.sh 의 종료 코드는 무조건 1 이었다. 그러면
+# "미검증 없음"(1)과 "판정 불가"(2)가 record-pass.sh 를 한 번 거치는
+# 순간 구별할 수 없어진다 — record-pass.sh 를 스크립트로 부르는 쪽(예:
+# 자동화)은 "그냥 기록할 게 없었나 보다"와 "원장이 깨졌다"를 종료 코드만
+# 보고는 못 가른다.
+
+@test "pending.sh 가 미검증 없음(1)이면 record-pass.sh 도 1 이다" {
+  # 스테이징된 게 없다 — current 모드가 exit 1 로 답하는 가장 흔한 경우.
+  run record_pass
+  [ "$status" -eq 1 ]
+}
+
+@test "pending.sh 가 판정 불가(2)이면 record-pass.sh 는 1 이 아니라 2 를 그대로 낸다" {
+  printf 'C1\n' > c.ts; git add c.ts
+  mkdir -p "$(qdir)"
+  printf '1111111111111111111111111111111111111111\n' > "$(qdir)/pending"   # 경로 없음(잘림) → pending.sh 가 exit 2
+  run record_pass
+  [ "$status" -eq 2 ]
+  [ "$status" -ne 1 ]
+  [ ! -f "$(qdir)/covered.tsv" ]
 }

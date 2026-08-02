@@ -3,7 +3,17 @@
 load helper
 
 setup() { setup_repo; seed_repo; }
-teardown() { teardown_repo; }
+teardown() {
+  # F1 픽스처가 남아 있으면(실제 플러그인이 아니라 mktemp -d 복사본이다)
+  # chmod 로 걸어 둔 권한을 먼저 풀고 지운다 — 실패한 테스트가 트리를
+  # 깨진 채로 남기지 않도록.
+  if [ -n "${F1_FIXTURE:-}" ]; then
+    chmod -R u+rwX "$F1_FIXTURE" 2>/dev/null
+    rm -rf "$F1_FIXTURE"
+    F1_FIXTURE=""
+  fi
+  teardown_repo
+}
 
 inst() { bash "$PLUGIN_ROOT/scripts/install.sh" "$@"; }
 
@@ -260,6 +270,51 @@ FAKEMV
   ! grep -q 'KKOCHIKKOCHI-HOOK-v1' "$(hooksdir)/pre-commit.kkochikkochi-chained"
 }
 
+@test "install 이 pre-push 도 설치한다" {
+  bash "$PLUGIN_ROOT/scripts/install.sh" install
+  [ -x "$(hooksdir)/pre-push" ]
+  run grep -c 'KKOCHIKKOCHI-HOOK-v1' "$(hooksdir)/pre-push"
+  [ "$output" -ge 1 ]
+}
+
+@test "pre-push 가 없으면 status 가 3(낡음)을 낸다" {
+  bash "$PLUGIN_ROOT/scripts/install.sh" install
+  rm -f "$(hooksdir)/pre-push"
+  run bash "$PLUGIN_ROOT/scripts/install.sh" status
+  [ "$status" -eq 3 ]
+}
+
+@test "pre-push 가 낡으면 status 가 3 을 낸다" {
+  bash "$PLUGIN_ROOT/scripts/install.sh" install
+  printf '#!/bin/sh\n# KKOCHIKKOCHI-HOOK-v1\nexit 0\n' > "$(hooksdir)/pre-push"
+  chmod +x "$(hooksdir)/pre-push"
+  run bash "$PLUGIN_ROOT/scripts/install.sh" status
+  [ "$status" -eq 3 ]
+}
+
+@test "둘 다 최신이면 status 가 0 을 낸다" {
+  bash "$PLUGIN_ROOT/scripts/install.sh" install
+  run bash "$PLUGIN_ROOT/scripts/install.sh" status
+  [ "$status" -eq 0 ]
+}
+
+@test "uninstall 이 둘 다 지운다" {
+  bash "$PLUGIN_ROOT/scripts/install.sh" install
+  bash "$PLUGIN_ROOT/scripts/install.sh" uninstall
+  [ ! -e "$(hooksdir)/pre-commit" ]
+  [ ! -e "$(hooksdir)/pre-push" ]
+}
+
+@test "기존 pre-push 훅도 체이닝한다" {
+  mkdir -p "$(hooksdir)"
+  printf '#!/bin/sh\necho theirs-push\nexit 0\n' > "$(hooksdir)/pre-push"
+  chmod +x "$(hooksdir)/pre-push"
+  bash "$PLUGIN_ROOT/scripts/install.sh" install
+  [ -x "$(hooksdir)/pre-push.kkochikkochi-chained" ]
+  run cat "$(hooksdir)/pre-push.kkochikkochi-chained"
+  [[ "$output" == *"theirs-push"* ]]
+}
+
 @test "ln 이 실패하면 예전 방식(이동)으로 물러나 설치를 계속한다" {
   printf '#!/bin/sh\necho ORIGINAL\nexit 0\n' > "$(hooksdir)/pre-commit"; chmod +x "$(hooksdir)/pre-commit"
   # BATS_TEST_TMPDIR 는 bats-core 1.5 이전엔 정의되지 않는다(Ubuntu 22.04
@@ -282,4 +337,85 @@ FAKEMV
   run cat "$(hooksdir)/pre-commit"
   [[ "$output" == *"ORIGINAL"* ]]
   [ ! -f "$(hooksdir)/pre-commit.kkochikkochi-chained" ]
+}
+
+# ── epoch — 게이트가 볼 수 있었던 적 없는 이력의 경계 (D47) ──
+
+@test "install 이 epoch 에 그 시점의 ref 팁을 적는다" {
+  inst install
+  [ -f "$(qdir)/epoch" ]
+  run cat "$(qdir)/epoch"
+  [[ "$output" == *"$(git rev-parse HEAD)"* ]]
+}
+
+@test "재설치는 epoch 을 덮어쓰지 않는다" {
+  inst install
+  first="$(cat "$(qdir)/epoch")"
+  printf 'C1\n' > c.ts; git add c.ts; commit_as_human -qm "after install"
+  # 대조군: HEAD 가 실제로 움직였다 — 안 그러면 아래 비교가 공허하다
+  [ "$(git rev-parse HEAD)" != "$first" ]
+  inst install
+  [ "$(cat "$(qdir)/epoch")" = "$first" ]
+}
+
+@test "uninstall 후 install 은 epoch 을 새로 쓴다" {
+  inst install
+  first="$(cat "$(qdir)/epoch")"
+  printf 'C1\n' > c.ts; git add c.ts; commit_as_human -qm "after install"
+  inst uninstall
+  inst install
+  [ "$(cat "$(qdir)/epoch")" != "$first" ]
+  run cat "$(qdir)/epoch"
+  [[ "$output" == *"$(git rev-parse HEAD)"* ]]
+}
+
+@test "uninstall 이 quiz-gate 를 통째로 지우고 알린다" {
+  inst install
+  mkdir -p "$(qdir)/passes"
+  printf '{}\n' > "$(qdir)/passes/p-stub.json"
+  stub_covered_line a.ts
+  # 대조군: 지우기 전에 실제로 있었다
+  [ -f "$(qdir)/covered.tsv" ]
+  run inst uninstall
+  [ "$status" -eq 0 ]
+  [ ! -d "$(qdir)" ]
+  [[ "$output" == *"quiz-gate"* ]]
+}
+
+# ── F1: 원본을 읽을 수 없는 훅이 있어도 status 는 조용히 0을 내지 않는다 ──
+
+@test "플러그인의 pre-push 원본을 읽을 수 없으면 status 는 0 이되 경고한다" {
+  # 실제 플러그인 디렉터리는 절대 건드리지 않는다 — mktemp -d 아래 복사본을
+  # 만들어 그 복사본만 chmod 한다.
+  F1_FIXTURE="$(mktemp -d)"
+  cp -R "$PLUGIN_ROOT" "$F1_FIXTURE/plugin"
+
+  bash "$F1_FIXTURE/plugin/scripts/install.sh" install
+  # 대조군: 정상 설치 직후엔 경고 없이 0
+  run bash "$F1_FIXTURE/plugin/scripts/install.sh" status
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"경고"* ]]
+
+  rm -f "$(hooksdir)/pre-push"                        # 저장소의 사본은 없음
+  chmod 000 "$F1_FIXTURE/plugin/hooks/pre-push"        # 플러그인 사본을 읽지 못하게
+
+  run bash "$F1_FIXTURE/plugin/scripts/install.sh" status
+  # 판정 근거가 없으니 exit 코드는 그대로 0 이다(D00) — 하지만 이제
+  # 침묵하지 않고 어떤 훅을 판정하지 못했는지 경고해야 한다.
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"경고"* ]]
+  [[ "$output" == *"pre-push"* ]]
+
+  chmod 644 "$F1_FIXTURE/plugin/hooks/pre-push"
+}
+
+@test "ref 가 하나도 없는 저장소에서도 install 이 죽지 않는다" {
+  empty="$(mktemp -d)"
+  git -C "$empty" init -q .
+  git -C "$empty" config user.email t@e.com
+  git -C "$empty" config user.name t
+  run env -C "$empty" bash "$PLUGIN_ROOT/scripts/install.sh" install
+  [ "$status" -eq 0 ]
+  [ -f "$empty/.git/quiz-gate/epoch" ]
+  [ ! -s "$empty/.git/quiz-gate/epoch" ]
 }

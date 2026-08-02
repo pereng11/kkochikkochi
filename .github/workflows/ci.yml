@@ -31,7 +31,7 @@ jobs:
           # hooks/pre-commit 은 확장자가 없고 POSIX sh 이므로 따로, 명시적으로 린트한다.
           # (hooks/*.sh 는 이제 아무것도 매치하지 않는다 — 매치 실패 시 그 자체를
           # 리터럴 인자로 넘겨 shellcheck 가 에러로 죽는 게 조용히 건너뛰는 것보다 낫다.)
-          shellcheck -s sh hooks/pre-commit
+          shellcheck -s sh hooks/pre-commit hooks/pre-push
           shellcheck scripts/*.sh tests/helper.bash
 
       - name: Validate JSON

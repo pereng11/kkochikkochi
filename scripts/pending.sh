@@ -12,13 +12,26 @@
 # 지나면 스킬이 낸 문항과 기록되는 파일 집합이 서로 달라졌다. 그 상태에서
 # 사용자는 A 를 풀고 B 가 검증된 것으로 기록됐다.
 #
-# 사용법: pending.sh
-# 출력:   <40자리 blob SHA>\t<경로>   한 줄에 하나 (stdout)
-# 종료:   0 = 목록 출력 / 1 = 대상 없음 또는 해석 불가 (사유는 stderr)
+# 사용법: pending.sh [--bundle <agent_id> | --all-unverified]
+# 출력:   <40자리 blob SHA>\t<경로>   한 줄에 하나 (stdout, exit 0 일 때만)
+# 종료:   0 = 목록을 출력했다
+#         1 = 미검증 대상이 없다(원장/pending 이 없음·비어 있음·전부
+#             커버됨·스테이징된 게 없음) — 정상 상태다
+#         2 = 판정 자체를 할 수 없다(원장·pending 의 형식이 깨졌거나
+#             중간에 끊겼다) — 1 과 절대 같은 코드를 쓰지 않는다. 호출자가
+#             "미검증 없음"과 "판정 불가"를 종료 코드만으로 갈라야 하기
+#             때문이다(review: stderr 메시지 문자열로 이 둘을 가르면,
+#             나중에 문구가 바뀌거나 번역되는 순간 그 판별이 조용히
+#             무너진다 — 실제로 그렇게 무너지는 것을 리뷰가 재현했다).
+#         (사유는 어느 실패든 stderr 에 사람이 읽을 문장으로 남는다.)
 
 set -uo pipefail
 
-die() { echo "kkochikkochi: $1" >&2; exit 1; }
+# $2 로 종료 코드를 받는다(기본 1). 코드 2 는 "판정 불가"에만 쓴다 — 아래
+# 세 곳(현재 모드의 두 형식 검증, 원장 모드의 ledger_unverified 실패)이
+# 전부다. 그 외의 모든 die 는 "미검증 없음"이거나 사용법 오류이므로 기본값
+# 그대로 둔다.
+die() { echo "kkochikkochi: $1" >&2; exit "${2:-1}"; }
 
 # 훅이 남긴 pending 을 몇 초까지 신선하다고 볼 것인가.
 #
@@ -31,8 +44,104 @@ die() { echo "kkochikkochi: $1" >&2; exit 1; }
 # 기록한 뒤 지운다 — 그래서 이 창이 실제로 문제가 되는 구간은 매우 좁다.
 PENDING_FRESH_SECS=900
 
-git_dir="$(git rev-parse --git-dir 2>/dev/null)" || die "git 저장소가 아닙니다"
-pending_file="$git_dir/quiz-gate/pending"
+git_common_dir="$(git rev-parse --git-common-dir 2>/dev/null)" || die "git 저장소가 아닙니다"
+pending_file="$git_common_dir/quiz-gate/pending"
+
+qdir="$git_common_dir/quiz-gate"
+covered="$qdir/covered.tsv"
+ledger="$qdir/ledger.tsv"
+
+MODE="current"
+BUNDLE_ID=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --bundle)         MODE="bundle"; BUNDLE_ID="${2:-}"; shift ;;
+    --all-unverified) MODE="all" ;;
+    *) die "알 수 없는 인자: $1 (사용법: pending.sh [--bundle <agent_id> | --all-unverified])" ;;
+  esac
+  shift
+done
+
+[ "$MODE" != "bundle" ] || [ -n "$BUNDLE_ID" ] || die "--bundle 에 agent_id 가 필요합니다"
+
+# 원장에서 미검증 (blob_sha, path) 를 뽑는다. covered.tsv 와의 차집합이며,
+# 같은 (sha, path) 가 여러 줄에 있어도 한 번만 낸다.
+#
+# -v 는 값에 이스케이프 처리를 한다 (back\slash.ts 의 \s 가 사라진다).
+# agent_id 는 정규화된 문자열이라 안전하지만, 경로는 ENVIRON 을 거치는
+# covered 쪽 비교와 철자가 어긋나지 않도록 원문 그대로 다룬다.
+#
+# 두 파일을 가르는 데 흔한 `FNR == NR` 트릭을 쓰지 않는다: covered.tsv 가
+# 아직 없어 0바이트로 부트스트랩된 첫 실행에서는 NR 이 첫 파일 동안 전혀
+# 늘지 않아, 두 번째 파일(ledger)의 첫 줄에서도 FNR==NR(둘 다 1)이 되어
+# ledger 전체가 covered 로 오분류된다(실측). 대신 covered 경로를
+# ENVIRON 으로 넘겨 FILENAME 과 비교한다 — 몇 줄짜리인지와 무관하다.
+ledger_unverified() {  # $1 = agent_id 또는 빈 문자열(전체)
+  [ -r "$ledger" ] || return 1
+  KK_FILTER="$1" KK_COVERED="$covered" awk -F'\t' '
+    FILENAME == ENVIRON["KK_COVERED"] { if (NF >= 2) covered[$1 FS $2] = 1; next }
+    {
+      if (NF != 5) { bad = 1; exit }
+      if (length($1) != 40 || $1 ~ /[^0-9a-f]/ || $2 == "") { bad = 1; exit }
+      want = ENVIRON["KK_FILTER"]
+      if (want != "" && $3 != want) next
+      key = $1 FS $2
+      if (key in covered) next
+      if (key in seen) next
+      seen[key] = 1
+      print $1 "\t" $2
+    }
+    END { if (bad) exit 1 }
+  ' "${covered:-/dev/null}" "$ledger" 2>/dev/null
+}
+
+if [ "$MODE" != "current" ]; then
+  filter=""
+  [ "$MODE" = "bundle" ] && filter="$BUNDLE_ID"
+
+  # 원장이 아직 없는 것과 원장이 손상된 것은 서로 다른 사유이고, 이제는
+  # 서로 다른 종료 코드다(1 대 2). 원장이 없는 것은 서브에이전트가 한 번도
+  # 커밋하지 않은 정상 상태이고, stop-gate.sh 가 매 턴 --all-unverified 를
+  # 부르므로(D45) 이 경로가 드문 사고가 아니라 흔한 경우다. 원장이 있는데
+  # 못 읽는 것(형식이 깨졌거나 append 가 중간에 끊겼다)은 그 반대다 — 나쁜
+  # 줄 하나가 원장 전체를 못 읽게 만들어 같은 원장에 있던 다른 파일의
+  # 미검증 상태까지 가릴 수 있다(실측, review critical finding 1). 종료
+  # 코드를 나누기 전에는 둘 다 exit 1 이었고, stop-gate.sh 가 stderr 의
+  # "손상" 문자열로 그 둘을 갈랐다 — 그런데 리뷰가 그 문자열만 바꿔서
+  # (내용은 그대로 둔 채) 재현한 결과, 같은 사고가 조용히 되살아났다.
+  # 문자열은 사람이 읽으라고 있는 것이지 기계가 분기하라고 있는 게 아니다
+  # — 그래서 여기서부터 신호를 종료 코드로 바꾼다. `stop-gate.sh` 는 이제
+  # `rc` 값만 보고 분기하고, 이 메시지 문자열은 사람이 읽을 `reason` 안에만
+  # 들어간다.
+  #
+  # 이 검사는 covered.tsv 부트스트랩(바로 아래)보다 **먼저** 와야 한다.
+  # Task 4 가 그 부트스트랩을 여기로 옮긴 이유가 바로 "아직 아무도 커밋하지
+  # 않은 새 레포에서 pending.sh 를 부르기만 해도 covered.tsv 가 생기는
+  # 부작용을 막는 것"이었다(review important 3, 아래 부트스트랩 주석의
+  # 실측 참고). 원장이 없으면 stop-gate.sh 가 매 턴 이 분기를 타므로,
+  # 순서를 반대로 두면 그 부작용이 "드문 사고"에서 "항상 일어나는 일"로
+  # 바뀐다.
+  if [ ! -r "$ledger" ]; then
+    die "검증할 것이 없습니다 (근거: 원장 없음)"
+  fi
+
+  # covered 가 없을 때 awk 가 죽지 않게 먼저 만든다. current 모드는 절대
+  # 여기를 지나지 않으므로 인자 없는 pending.sh 는 covered.tsv 에 손대지
+  # 않는다(실측: qdir 가 아직 없는 새 레포에서 무조건 실행하면 "No such
+  # file or directory" 가 새어나가고, 아무 통과도 기록하지 않았는데
+  # covered.tsv 가 빈 파일로 생겨버린다). `{ } 2>/dev/null` 로 그룹째
+  # 감싸야 한다 — `: > "$covered" 2>/dev/null` 처럼 fd1 리다이렉트만 따로
+  # 실패하면 bash 는 그 실패를 fd2 리다이렉트가 걸리기 **전에** 보고해
+  # 억제되지 않는다.
+  [ -e "$covered" ] || { : > "$covered"; } 2>/dev/null || covered=/dev/null
+
+  if ! out="$(ledger_unverified "$filter")"; then
+    die "원장이 손상됐습니다 ($ledger)" 2
+  fi
+  [ -n "$out" ] || die "검증할 것이 없습니다 (근거: 원장)"
+  printf '%s\n' "$out"
+  exit 0
+fi
 
 # ① 훅이 발표한 답이 있고 신선하면 그것을 쓴다.
 #
@@ -86,7 +195,7 @@ if [ -z "$pending" ]; then
              { printf "%s\t%s\n", sha, $0 }
       END    { if (NR % 2) exit 1 }
     ')"; then
-    die "커밋될 경로 목록을 해석할 수 없습니다 (경로에 개행 문자가 있습니까?)"
+    die "커밋될 경로 목록을 해석할 수 없습니다 (경로에 개행 문자가 있습니까?)" 2
   fi
 fi
 
@@ -103,6 +212,6 @@ fi
 printf '%s\n' "$pending" | awk -F'\t' '
   NF != 2 || length($1) != 40 || $1 ~ /[^0-9a-f]/ || $2 == "" { exit 1 }
   END { if (NR == 0) exit 1 }
-' || die "검증 대상 목록이 손상됐습니다 (근거: $source_desc). 경로에 탭 문자가 있거나 pending 파일이 잘렸습니다"
+' || die "검증 대상 목록이 손상됐습니다 (근거: $source_desc). 경로에 탭 문자가 있거나 pending 파일이 잘렸습니다" 2
 
 printf '%s\n' "$pending"

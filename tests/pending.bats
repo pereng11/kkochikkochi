@@ -89,17 +89,21 @@ recorded() { cut -f1,2 "$(qdir)/covered.tsv"; }
 @test "잘린 pending 줄은 거부한다 (조용한 성공 금지)" {
   # 예전에는 record-pass.sh 가 `sha<TAB><TAB>pass_id` 를 쓰고 성공을 보고했다.
   # 사용자는 통과했다는 말을 듣지만 게이트는 그대로 막혀 있었다.
+  #
+  # 종료 코드는 1(미검증 없음)이 아니라 2(판정 불가)다 — "잘렸다"는 "정말
+  # 없다"와 다른 사유이고, 두 사유가 같은 코드를 쓰면 호출자가 못 가른다
+  # (review, 이 파일 끝의 "종료 코드 계약" 절 참고).
   install_hook
   printf 'C1\n' > c.ts; git add c.ts
   mkdir -p "$(qdir)"
   printf '1111111111111111111111111111111111111111\n' > "$(qdir)/pending"   # 경로 없음
 
   run pending_sh
-  [ "$status" -eq 1 ]
+  [ "$status" -eq 2 ]
   [[ "$output" == *"손상"* ]]
 
   run record_pass
-  [ "$status" -ne 0 ]                        # 성공을 보고하지 않는다
+  [ "$status" -eq 2 ]                        # record-pass.sh 가 그대로 물려받는다(뭉개지 않는다)
   [ ! -f "$(qdir)/covered.tsv" ]             # 쓰레기 줄을 남기지도 않는다
 }
 
@@ -109,9 +113,9 @@ recorded() { cut -f1,2 "$(qdir)/covered.tsv"; }
   mkdir -p "$(qdir)"
   printf '1111111111111111111111111111111111111111\ta\tb.ts\n' > "$(qdir)/pending"
   run pending_sh
-  [ "$status" -eq 1 ]
+  [ "$status" -eq 2 ]
   run record_pass
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 2 ]
 }
 
 @test "SHA 가 40자리 16진수가 아니면 거부한다" {
@@ -120,7 +124,36 @@ recorded() { cut -f1,2 "$(qdir)/covered.tsv"; }
   mkdir -p "$(qdir)"
   printf 'zzzz\tc.ts\n' > "$(qdir)/pending"
   run pending_sh
+  [ "$status" -eq 2 ]
+}
+
+# ── 종료 코드 계약: 0 = 목록 / 1 = 미검증 없음 / 2 = 판정 불가 ──
+#
+# review: 예전에는 이 둘(미검증 없음 / 판정 불가)이 같은 코드(1)를 썼고,
+# stop-gate.sh 가 stderr 의 "손상" 문자열로 갈랐다. 리뷰가 그 문자열만(내용은
+# 그대로) 바꿔서 재현하니 아무 것도 안 고쳤는데 판정이 조용히 무너졌다 —
+# 문자열은 사람이 읽으라고 있는 것이지 기계가 분기할 신호가 아니다. 그래서
+# 이제 종료 코드 자체가 계약이고, 이 절이 그 계약을 코드 하나하나 못박는다.
+# 아래는 current 모드(무인자)만 다룬다 — ledger 모드의 같은 계약은
+# tests/ledger.bats 에 있다.
+
+@test "종료 코드 계약 — 목록이 나오면 0" {
+  printf 'C1\n' > c.ts; git add c.ts
+  run pending_sh
+  [ "$status" -eq 0 ]
+}
+
+@test "종료 코드 계약 — 미검증(스테이징된 것)이 없으면 1" {
+  run pending_sh
   [ "$status" -eq 1 ]
+}
+
+@test "종료 코드 계약 — pending 형식이 깨지면 2, 1 이 아니다" {
+  mkdir -p "$(qdir)"
+  printf '1111111111111111111111111111111111111111\n' > "$(qdir)/pending"   # 경로 없음(잘림)
+  run pending_sh
+  [ "$status" -eq 2 ]
+  [ "$status" -ne 1 ]
 }
 
 @test "신선도 규칙이 pending.sh 한 곳에만 있다" {

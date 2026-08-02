@@ -9,7 +9,7 @@
 
 set -u
 
-QDIR="$(git rev-parse --git-path quiz-gate)"
+QDIR="$(git rev-parse --git-common-dir)/quiz-gate"
 CHAINED="$(git rev-parse --git-path hooks)/pre-commit.kkochikkochi-chained"
 
 # 핸드셰이크 마커를 몇 초까지 "신선하다"고 볼 것인가.
@@ -76,19 +76,44 @@ fi
 agent_signal=""
 
 # 1차: 핸드셰이크. 변수 이름에 의존하지 않아 버전 변경에 강하다. (D34)
-marker="$QDIR/agent-session"
-if [ -f "$marker" ]; then
-  now=$(date +%s)
+#
+# 마커는 agent_id 별 파일이다. 단일 파일이던 시절에는 병렬 서브에이전트가
+# 서로를 덮어썼다 — 실측한 스탬프 간격이 0.14초다.
+#
+# `agent_id` 를 가진 신선한 마커가 하나라도 있으면 그것을 고른다. 왜
+# "하나라도"인지는 다음 태스크의 분기 규칙과 함께 봐야 한다: 오판을
+# "막지 않는" 쪽으로만 흐르게 하기 위해서다.
+now=$(date +%s)
+marker_agent_id=""
+marker_agent_type=""
+for marker in "$QDIR/marker"/*; do
+  [ -f "$marker" ] || continue
   # GNU 는 -f 를 --file-system 으로 해석해 종료코드 0으로 헛값을 낸다. GNU
   # 형식을 먼저 시도해야 그 헛값이 아니라 진짜 실패로 폴백을 탄다.
   mtime=$(stat -c %Y "$marker" 2>/dev/null || stat -f %m "$marker" 2>/dev/null || echo 0)
   case "$mtime" in '' | *[!0-9]*) mtime=0 ;; esac
   age=$((now - mtime))
   # 미래 시각(시계 오차·NFS)이면 age 가 음수다 — 그것도 "신선함"이 아니다.
-  if [ "$age" -ge 0 ] && [ "$age" -le "$FRESH_SECS" ]; then
-    agent_signal="handshake:$(head -n 1 "$marker" 2>/dev/null)"
+  #
+  # `A && B || continue` 로 쓰지 않는다. 여기서는 의미가 같지만 shellcheck
+  # 0.9 가 SC2015 로 잡아 CI 린트를 깨뜨린다(로컬 0.11 은 잡지 않아 로컬
+  # 검증만으로는 절대 드러나지 않는다 — 실측). 조건을 뒤집어 명시적으로 쓴다.
+  if [ "$age" -lt 0 ] || [ "$age" -gt "$FRESH_SECS" ]; then
+    continue
   fi
-fi
+
+  line="$(head -n 1 "$marker" 2>/dev/null)"
+  this_agent="$(printf '%s' "$line" | cut -f1)"
+  this_id="$(printf '%s' "$line" | cut -f2)"
+  this_type="$(printf '%s' "$line" | cut -f3)"
+
+  [ -n "$agent_signal" ] || agent_signal="handshake:$this_agent"
+  if [ -n "$this_id" ] && [ -z "$marker_agent_id" ]; then
+    marker_agent_id="$this_id"
+    marker_agent_type="$this_type"
+    agent_signal="handshake:$this_agent/$this_id"
+  fi
+done
 
 # 2차: 직접 관찰한 환경변수만. 추측으로 채우지 않는다. (D34)
 if [ -z "$agent_signal" ]; then
@@ -173,15 +198,56 @@ PENDING
 [ -n "$missing" ] || exit 0
 
 # jq 가 없으면 통과시킨다. 이 훅 자체는 jq 를 쓰지 않지만 통과를 기록하는
-# record-pass.sh 는 jq 없이 한 줄도 쓰지 못한다 — 여기서 막으면 퀴즈를
-# 통과할 방법이 없는 채로 커밋이 영구히 막힌다. 이해와 무관한 이유로 커밋을
-# 영구히 막는 것이 이 프로젝트에서 가장 하지 말아야 할 일이다. 설치기가
-# 애초에 jq 없는 환경에서 설치를 거부하므로(D42) 여긴 마지막 방어선이다.
+# record-pass.sh 는 jq 없이 한 줄도 쓰지 못한다 — 여기서 막으면(또는 원장에
+# 적어 Stop 이 막으면) 퀴즈를 통과할 방법이 없는 채로 커밋이 영구히 막힌다.
+# 이해와 무관한 이유로 커밋을 영구히 막는 것이 이 프로젝트에서 가장 하지
+# 말아야 할 일이다. 설치기가 애초에 jq 없는 환경에서 설치를 거부하므로(D42)
+# 여긴 마지막 방어선이다.
 if ! command -v jq >/dev/null 2>&1; then
   echo "kkochikkochi: 경고 — jq 가 없어 퀴즈를 통과시킬 수 없으므로 이 커밋을 검증 없이 통과시킵니다 (jq 를 설치하세요)" >&2
   exit 0
 fi
 
+# ── 5. 서브에이전트 경로 — 막지 않고 원장에 적는다 ────────────────
+#
+# 서브에이전트는 사람에게 물을 수 없다. 여기서 막으면 통과할 방법이 없다.
+# 그래서 적어 두고 통과시키고, PostToolUse(Task)·Stop·pre-push 가 검증을
+# 강제한다.
+#
+# 마커가 섞여 있을 때 이 분기를 타는 이유(오판을 "막지 않는" 쪽으로만
+# 흐르게 한다)는 설계 문서 §4 에 있다. 반대 방향으로 틀리면 서브에이전트가
+# 갇히고, 이 방향으로 틀리면 검증 시점만 뒤로 밀린다.
+if [ -n "$marker_agent_id" ]; then
+  at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if ! { mkdir -p "$QDIR" 2>/dev/null && while IFS='	' read -r sha path; do
+      [ -n "$sha" ] || continue
+      case "$path" in
+        *'	'*)
+          # 원장(ledger.tsv)도 covered.tsv 와 같은 탭 구분 형식이라, 경로에
+          # 진짜 탭 바이트가 있으면 그 한 줄 안에서 필드 수가 늘어나
+          # ledger_unverified(scripts/pending.sh)의 NF 검사가 이 줄 하나
+          # 때문에 원장 전체를 "손상"으로 판정해버린다 — 실측: 이 줄 하나가
+          # 같은 커밋에 함께 적히는 다른 정상 경로의 미검증 상태까지
+          # 가렸다(critical finding 1). 이 경로 하나만 원장 기록에서 빼고
+          # 경고하면, 같은 커밋의 나머지 정상 경로는 그대로 추적된다.
+          # README 한계 표의 covered.tsv 항목과 같은 한계이자 같은 처방이다
+          # — 갇히지는 않는다.
+          echo "kkochikkochi: 경고 — 경로에 탭 문자가 있어 원장에 기록할 수 없습니다(탭 구분 형식의 한계): $path — 이 파일은 이번 커밋의 검증 추적에서 빠집니다" >&2
+          continue
+          ;;
+      esac
+      printf '%s\t%s\t%s\t%s\t%s\n' \
+        "$sha" "$path" "$marker_agent_id" "$marker_agent_type" "$at"
+    done <<LEDGER >> "$QDIR/ledger.tsv"
+$missing_pairs
+LEDGER
+  }; then
+    echo "kkochikkochi: 경고 — $QDIR/ledger.tsv 를 쓸 수 없어 이 커밋은 검증 없이 통과합니다" >&2
+  fi
+  exit 0
+fi
+
+# ── 6. 메인 스레드 경로 — 지금처럼 막는다 ─────────────────────────
 # 훅이 계산한 답을 파일로 남긴다. 실패해도 커밋 차단 자체는 그대로 진행하지만,
 # **조용히 넘어가지는 않는다** — 이 파일이 없으면 스킬과 record-pass.sh 가
 # git diff --cached 로 폴백하고, `-a` 나 `-- <path>` 커밋에서는 그 계산이 훅과

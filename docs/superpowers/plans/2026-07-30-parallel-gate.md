@@ -19,7 +19,12 @@
 - 판정 규칙("지금 검증할 대상은 무엇인가")은 `scripts/pending.sh` 한 곳에만 둔다 (D45). 다른 파일에 같은 규칙을 다시 적지 않는다.
 - 경로는 `git -c core.quotePath=false diff --cached --raw -z --abbrev=40 --no-renames` 의 원문 그대로 쓴다. 탭·개행이 든 경로는 거부한다.
 - 애매한 경우는 통과시킨다 (D35). 사람이 터미널에서 직접 친 커밋(fd 1/2 가 tty)은 막지 않는다 (D41).
-- Codex 매니페스트(루트 `hooks.json`)에는 새 훅을 추가하지 않는다. Codex 페이로드에는 `agent_id` 가 없으므로 마커가 항상 `main` 이 되어 `pre-commit` 이 늘 막는다 — 현행 동작이 그대로 유지된다.
+- **[정정, 2026-08-01: 이 전제는 거짓으로 확인됐다.]** Codex 페이로드에도 `agent_id`·`agent_type` 이 있다 (`codex-rs/hooks/schema/generated/*.schema.json`:
+  `PreToolUse`·`PostToolUse` 에 optional, `SubagentStart`·`SubagentStop` 에 required).
+  서브에이전트 생성 도구의 직렬화 이름은 `spawn_agent` 이고 matcher alias 는 `Agent` 다
+  (`codex-rs/core/src/tools/hook_names.rs`) — Claude Code 의 `Task` 는 Codex 에서 아무것도
+  매칭하지 않는다. 두 에이전트의 층 구조는 같고 이벤트 이름만 다르다. 상세는
+  `docs/superpowers/specs/2026-08-01-push-scope-and-codex-design.md` §5.
 
 ## 스펙 수정 두 건
 
@@ -1494,8 +1499,11 @@ exit 0
 }
 
 @test "Codex 매니페스트에는 서브에이전트 훅이 없다" {
-  # Codex 페이로드에는 agent_id 가 없어 마커가 항상 main 이 되고, pre-commit 이
-  # 늘 막는다 — 현행 동작 그대로다. 훅을 등록하면 돌지 않는 코드만 늘어난다.
+  # [정정, 2026-08-01: 이 전제는 거짓으로 확인됐다.] Codex 페이로드에도
+  # `agent_id`·`agent_type` 이 있다 (`PreToolUse`·`PostToolUse` 에 optional,
+  # `SubagentStart`·`SubagentStop` 에 required). 이 전제가 무너지면서 이 테스트
+  # 자체도 폐기됐다 — 실제 구현은 훅 4종 + `spawn_agent` 매처를 등록한다
+  # (`tests/manifests.bats`, `docs/superpowers/specs/2026-08-01-push-scope-and-codex-design.md` §5).
   for key in Stop PostToolUse SubagentStart SubagentStop; do
     run jq -e --arg k "$key" '.hooks | has($k)' "$PLUGIN_ROOT/hooks.json"
     [ "$status" -ne 0 ]

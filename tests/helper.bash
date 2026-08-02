@@ -15,8 +15,24 @@ setup_repo() {
   git config commit.gpgsign false
 }
 
+# 링크된 워크트리를 만들고 그 경로를 stdout 으로 낸다.
+# teardown_repo 가 지울 수 있도록 TEST_WORKTREES 에 모아 둔다.
+add_worktree() {  # $1 = 새 브랜치 이름
+  local wt
+  wt="$(mktemp -d)"
+  rm -rf "$wt"   # git worktree add 는 존재하지 않는 경로를 요구한다
+  git worktree add -q "$wt" -b "$1" >/dev/null 2>&1 || return 1
+  TEST_WORKTREES="${TEST_WORKTREES:-} $wt"
+  export TEST_WORKTREES
+  echo "$wt"
+}
+
 teardown_repo() {
   cd / || return 0
+  for wt in ${TEST_WORKTREES:-}; do
+    [ -d "$wt" ] && rm -rf "$wt"
+  done
+  TEST_WORKTREES=""
   [ -n "${TEST_REPO:-}" ] && [ -d "$TEST_REPO" ] && rm -rf "$TEST_REPO"
   return 0
 }
@@ -30,7 +46,7 @@ seed_repo() {
   git commit -qm init
 }
 
-qdir() { git rev-parse --git-path quiz-gate; }
+qdir() { echo "$(git rev-parse --git-common-dir)/quiz-gate"; }
 hooksdir() { git rev-parse --git-path hooks; }
 
 install_hook() {
@@ -39,9 +55,14 @@ install_hook() {
   chmod +x "$(hooksdir)/pre-commit"
 }
 
-stamp() {  # 핸드셰이크 마커를 신선하게 남긴다
-  mkdir -p "$(qdir)"
-  echo "${1:-test-agent}/sess-1" > "$(qdir)/agent-session"
+# 핸드셰이크 마커를 신선하게 남긴다.
+# 인자 없이 부르면 메인 스레드 마커, agent_id 를 주면 서브에이전트 마커다.
+stamp() {  # $1 = agent, $2 = agent_id, $3 = agent_type
+  local name="main"
+  [ -n "${2:-}" ] && name="$2"
+  mkdir -p "$(qdir)/marker"
+  printf '%s\t%s\t%s\t%s\n' \
+    "${1:-test-agent}" "${2:-}" "${3:-}" "sess-1" > "$(qdir)/marker/$name"
 }
 
 # ⚠ 이것은 record-pass.sh 가 아니다. 훅 단독 테스트용으로 covered.tsv 에 한 줄을
@@ -58,6 +79,18 @@ stamp() {  # 핸드셰이크 마커를 신선하게 남긴다
 stub_covered_line() {  # $1 = 경로
   mkdir -p "$(qdir)"
   printf '%s\t%s\t%s\n' "$(git hash-object -- "$1")" "$1" "p-stub" >> "$(qdir)/covered.tsv"
+}
+
+# ⚠ 이것은 hooks/pre-commit 이 아니다. 훅 없이 pending.sh 만 보는 테스트용으로
+# 원장에 한 줄을 손으로 박아 넣는 스텁이며, SHA 를 **워크트리 파일**에서
+# 계산한다. stub_covered_line 과 같은 주의가 그대로 적용된다 — 훅이 실제로
+# 그런 줄을 만들어내는가를 주장하려면 진짜 훅을 태워야 한다
+# (tests/pre-commit.bats 의 "서브에이전트 마커면 막지 않고 원장에 적는다").
+stub_ledger_line() {  # $1 = 경로, $2 = agent_id, $3 = agent_type
+  mkdir -p "$(qdir)"
+  printf '%s\t%s\t%s\t%s\t%s\n' \
+    "$(git hash-object -- "$1")" "$1" "$2" "${3:-general-purpose}" \
+    "2026-07-30T00:00:00Z" >> "$(qdir)/ledger.tsv"
 }
 
 # 진짜 record-pass.sh 를 통과 기록으로 태운다 (왕복 주장은 이것만 쓴다).
