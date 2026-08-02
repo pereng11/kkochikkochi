@@ -3,7 +3,17 @@
 load helper
 
 setup() { setup_repo; seed_repo; }
-teardown() { teardown_repo; }
+teardown() {
+  # F1 픽스처가 남아 있으면(실제 플러그인이 아니라 mktemp -d 복사본이다)
+  # chmod 로 걸어 둔 권한을 먼저 풀고 지운다 — 실패한 테스트가 트리를
+  # 깨진 채로 남기지 않도록.
+  if [ -n "${F1_FIXTURE:-}" ]; then
+    chmod -R u+rwX "$F1_FIXTURE" 2>/dev/null
+    rm -rf "$F1_FIXTURE"
+    F1_FIXTURE=""
+  fi
+  teardown_repo
+}
 
 inst() { bash "$PLUGIN_ROOT/scripts/install.sh" "$@"; }
 
@@ -370,6 +380,33 @@ FAKEMV
   [ "$status" -eq 0 ]
   [ ! -d "$(qdir)" ]
   [[ "$output" == *"quiz-gate"* ]]
+}
+
+# ── F1: 원본을 읽을 수 없는 훅이 있어도 status 는 조용히 0을 내지 않는다 ──
+
+@test "플러그인의 pre-push 원본을 읽을 수 없으면 status 는 0 이되 경고한다" {
+  # 실제 플러그인 디렉터리는 절대 건드리지 않는다 — mktemp -d 아래 복사본을
+  # 만들어 그 복사본만 chmod 한다.
+  F1_FIXTURE="$(mktemp -d)"
+  cp -R "$PLUGIN_ROOT" "$F1_FIXTURE/plugin"
+
+  bash "$F1_FIXTURE/plugin/scripts/install.sh" install
+  # 대조군: 정상 설치 직후엔 경고 없이 0
+  run bash "$F1_FIXTURE/plugin/scripts/install.sh" status
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"경고"* ]]
+
+  rm -f "$(hooksdir)/pre-push"                        # 저장소의 사본은 없음
+  chmod 000 "$F1_FIXTURE/plugin/hooks/pre-push"        # 플러그인 사본을 읽지 못하게
+
+  run bash "$F1_FIXTURE/plugin/scripts/install.sh" status
+  # 판정 근거가 없으니 exit 코드는 그대로 0 이다(D00) — 하지만 이제
+  # 침묵하지 않고 어떤 훅을 판정하지 못했는지 경고해야 한다.
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"경고"* ]]
+  [[ "$output" == *"pre-push"* ]]
+
+  chmod 644 "$F1_FIXTURE/plugin/hooks/pre-push"
 }
 
 @test "ref 가 하나도 없는 저장소에서도 install 이 죽지 않는다" {

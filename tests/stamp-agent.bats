@@ -89,6 +89,82 @@ stamp_run() {  # $1 = agent, $2 = command, $3 = agent_id, $4 = agent_type
   [ ! -f "$(qdir)/marker/main" ]
 }
 
+# ── F2: git 토큰이 없으면 --no-verify/-n 판정을 하지 않는다 ──
+#
+# *commit*|*push* 프리필터를 넓힌 대가로 늘어난 오탐(JS/TS 저장소의 grep/rg/find
+# 같은 명령이 "commit"·"push" 글자와 짧은 -n 묶음을 우연히 담는 경우)을 줄인다.
+# git 호출로 보이는 토큰(`git` 또는 `g`)이 없으면 애초에 --no-verify/-n 검사를
+# 하지 않는다.
+
+@test "여전히 거부: git commit --no-verify" {
+  run stamp_run claude-code 'git commit --no-verify'
+  [[ "$output" == *"deny"* ]]
+  [[ "$output" == *"no-verify"* ]]
+}
+
+@test "여전히 거부: git push --no-verify" {
+  run stamp_run claude-code 'git push --no-verify'
+  [[ "$output" == *"deny"* ]]
+  [[ "$output" == *"no-verify"* ]]
+}
+
+@test "여전히 거부: git push -n origin main" {
+  run stamp_run claude-code 'git push -n origin main'
+  [[ "$output" == *"deny"* ]]
+  [[ "$output" == *"no-verify"* ]]
+}
+
+@test "여전히 거부: g commit --no-verify (바이너리 별칭 g, 서브커맨드는 풀어 씀)" {
+  run stamp_run claude-code 'g commit --no-verify'
+  [[ "$output" == *"deny"* ]]
+  [[ "$output" == *"no-verify"* ]]
+}
+
+@test "여전히 거부: 절대경로 /usr/bin/git commit --no-verify" {
+  run stamp_run claude-code '/usr/bin/git commit --no-verify'
+  [[ "$output" == *"deny"* ]]
+  [[ "$output" == *"no-verify"* ]]
+}
+
+@test "여전히 거부: bash -c 로 감싼 git commit --no-verify" {
+  run stamp_run claude-code 'bash -c "git commit --no-verify"'
+  [[ "$output" == *"deny"* ]]
+  [[ "$output" == *"no-verify"* ]]
+}
+
+@test "이제 통과: grep -rn push src/ (git 토큰 없음)" {
+  run stamp_run claude-code 'grep -rn push src/'
+  [ -z "$output" ]
+}
+
+@test "이제 통과: rg -n push (git 토큰 없음)" {
+  run stamp_run claude-code 'rg -n push'
+  [ -z "$output" ]
+}
+
+@test "이제 통과: find . -name '*push*' (git 토큰 없음)" {
+  run stamp_run claude-code "find . -name '*push*'"
+  [ -z "$output" ]
+}
+
+@test "이제 통과: grep -rn commit docs/ (git 토큰 없음)" {
+  # "commit" 을 담고 있어 마커 쓰기·건강검진 프리필터(아래, git 토큰 요건과
+  # 무관하게 *commit* 만 본다)에는 계속 걸린다. 훅을 온전히 설치해(pre-commit
+  # ·pre-push 둘 다) 건강검진 자체의 deny 를 없애 둬야, 여기서 관찰하려는
+  # --no-verify/-n 판정만 남는다 — 안 그러면 "게이트 미설치/낡음" deny 와
+  # 뒤섞여 무엇이 고쳐졌는지 알 수 없다.
+  bash "$PLUGIN_ROOT/scripts/install.sh" install
+  run stamp_run claude-code 'grep -rn commit docs/'
+  [ -z "$output" ]
+}
+
+@test "이제 통과: grep -rn push .github/ (git 토큰 아님 — 경계 검사)" {
+  # ".github" 안의 "git" 은 앞 경계('.' 바로 뒤)와 뒤 경계('h' 앞) 양쪽에서
+  # 걸러져야 한다. 이 테스트는 그 둘 다를 실제로 확인한다.
+  run stamp_run claude-code 'grep -rn push .github/'
+  [ -z "$output" ]
+}
+
 @test "stdout 에 아무것도 쓰지 않는다" {
   # 커밋으로 보이는 명령 + 훅 미설치 조합의 stdout(건강검진 deny)은
   # tests/health-check.bats 가 다룬다. 여기서는 핸드셰이크 기록 경로
