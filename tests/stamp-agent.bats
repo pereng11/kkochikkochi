@@ -62,6 +62,33 @@ stamp_run() {  # $1 = agent, $2 = command, $3 = agent_id, $4 = agent_type
   [ "$(find "$(qdir)/marker" -type f | wc -l | tr -d ' ')" = "1" ]
 }
 
+# ── F2: pre-push 최종 경계를 --no-verify 로 무저항 우회하지 못한다 ──
+#
+# `hooks/pre-push` 는 Stop 을 Esc 로 빠져나간 에이전트를 잡는 최종 경계다.
+# 프리필터가 *commit* 만 봤을 때는 `git push --no-verify` 가 "commit" 이란
+# 글자를 담지 않아 이 스크립트에 아예 들어오지 못했다(실측: deny() 미호출).
+# 아래는 그 구멍이 막혔는지 직접 확인한다.
+
+@test "git push --no-verify 는 deny 한다" {
+  run stamp_run claude-code 'git push --no-verify'
+  [[ "$output" == *"deny"* ]]
+  [[ "$output" == *"no-verify"* ]]
+}
+
+@test "git push -n 도 (짧은 형태 묶음 포함) deny 한다" {
+  run stamp_run claude-code 'git push -n origin main'
+  [[ "$output" == *"deny"* ]]
+  [[ "$output" == *"no-verify"* ]]
+}
+
+# 회귀 방지: --no-verify 판정 범위를 *push* 로 넓히면서 프리필터 자체(마커
+# 쓰기 게이트)까지 같이 넓히면 D44 가 되살아난다(주석 참고, stamp-agent.sh).
+# 플래그 없는 평범한 push 는 여전히 마커를 남기지 않아야 한다.
+@test "git push (플래그 없음) 은 여전히 마커를 남기지 않는다" {
+  stamp_run claude-code 'git push origin main'
+  [ ! -f "$(qdir)/marker/main" ]
+}
+
 @test "stdout 에 아무것도 쓰지 않는다" {
   # 커밋으로 보이는 명령 + 훅 미설치 조합의 stdout(건강검진 deny)은
   # tests/health-check.bats 가 다룬다. 여기서는 핸드셰이크 기록 경로

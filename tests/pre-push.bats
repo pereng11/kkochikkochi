@@ -562,6 +562,51 @@ setup_origin() {   # bare origin 을 만들고 현재 HEAD 를 main 으로 올�
   [ "$status" -eq 0 ]
 }
 
+# ── D45 중복의 유일한 종단 테스트 (F3) ──
+#
+# 이 훅은 covered.tsv 비교를 구조적으로 중복한다(파일 헤더 주석의 "D45 과의
+# 긴장" 참고) — 설치된 사본은 플러그인으로 되돌아갈 방법이 없어
+# scripts/record-pass.sh 를 부를 수 없기 때문이다. 위의 "검증된 커밋만
+# 있으면 통과한다" 를 비롯해 이제까지 모든 "검증된 내용이 pre-push 를
+# 통과한다" 테스트는 stub_covered_line(tests/helper.bash) — sha 를 손으로
+# 계산해 covered.tsv 에 한 줄 박아 넣는 스텁 — 을 썼다. record-pass.sh 가
+# 실제로 covered.tsv 에 무엇을 쓰는지는 어떤 테스트도 왕복으로 확인하지
+# 않는다. record-pass.sh 가 sha 를 유도하는 방식이 바뀌면(예: pending.sh 가
+# 넘겨준 sha 대신 워크트리 파일을 다시 해시) tests/pre-push.bats 는 전부
+# 초록인 채로 실전의 모든 push 가 막히기 시작할 수 있다.
+@test "실제 record-pass.sh 로 기록한 원장 통과가 pre-push 를 통과시킨다 (D45 종단)" {
+  install_hook
+  install_push_hook
+  base="$(git rev-parse HEAD)"
+
+  # 서브에이전트 경로로 라우팅한다 — 마커에 agent_id 가 있으면 pre-commit
+  # 은 막지 않고 ledger.tsv 에 적는다(hooks/pre-commit §5).
+  stamp claude-code sub-e2e general-purpose
+  printf 'C1\n' > c.ts
+  git add c.ts
+  commit_as_human -qm "subagent work"
+
+  # 커밋 뒤 같은 파일을 스테이징 없이 더 고친다 — "지금 워크트리에 있는
+  # 내용" 과 "그때 커밋(→push)된 내용" 을 의도적으로 갈라 둔다. 이 드리프트가
+  # 없으면 두 값이 우연히 항상 같아서 아래 돌연변이 검증이 아무것도 증명하지
+  # 못한다 (record-pass.bats 의 기존 테스트들이 전부 이 드리프트가 없는
+  # 형태라 돌연변이에 안 걸리는 것과 같은 이유).
+  printf 'C1\nC2 (post-commit drift, unstaged)\n' > c.ts
+
+  run run_push_hook "$base" "$(git rev-parse HEAD)"
+  [ "$status" -ne 0 ]                          # 대조군: 기록 전에는 막힌다
+  [[ "$output" == *"c.ts"* ]]
+
+  # 진짜 record-pass.sh 를 --all-unverified 로 태운다 (stub_covered_line 이
+  # 아니라 실제 writer).
+  printf '%s' '{"questions":[{"axis":"facts","q":"c.ts 에 무엇이 추가됐나?","evidence":"c.ts:1","format":"choice","answer":"A","correct":"A","attempts":1,"gave_up":false}]}' \
+    | bash "$PLUGIN_ROOT/scripts/record-pass.sh" --all-unverified
+  [ "$?" -eq 0 ]
+
+  run run_push_hook "$base" "$(git rev-parse HEAD)"
+  [ "$status" -eq 0 ]                          # 기록 후에는 통과한다
+}
+
 @test "local sha 를 로컬이 모르면 여전히 fail-closed 다" {
   # Critical 2 의 성질은 그대로 지킨다 — 범위를 하나도 못 본 것과 정말
   # 아무것도 없는 것은 다르다. remote_sha 로는 더 이상 재현되지 않으므로

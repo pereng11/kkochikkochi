@@ -6,9 +6,15 @@
 ## [Unreleased]
 
 ### Added
+- **git `pre-push` 훅 — 최종 경계.** `Stop` 훅은 Esc 로 빠져나갈 수 있으므로, 미검증 커밋이 남에게 넘어가는 것은 이제 push 시점에 한 번 더 막는다. 커밋 시점에는 우회했던 `git merge` 도 여기서 다시 훑는다(결합 diff). 사람이 직접 만든 커밋도 이 층은 출처를 보지 않으므로 대상이다 — `git fetch`·`git push --no-verify` 탈출구를 메시지에 안내한다([D47](docs/DECISIONS.md))
+- **서브에이전트 병렬 게이트 — 네 개의 새 층.** 서브에이전트는 사람에게 물을 수 없어 `pre-commit` 에서 막을 수 없다. 그래서 원장(`ledger.tsv`)에 적어 두고 뒤에서 강제한다: `SubagentStart`/`SubagentStop` 이 번들을 열고 봉인하고(`agents/<hash>`), `PostToolUse`(`Task`/`spawn_agent`)가 봉인된 번들의 검증을 부모 에이전트에게 요구하고, `Stop` 이 미검증이 남은 채로 턴이 끝나는 것을 막는다
+- `/kk-defer` — 이번 턴은 서브에이전트 번들 퀴즈를 미루고 턴 끝에 몰아 받는다(턴 끝까지만, 영구 우회 아님)
 - Codex 매니페스트(`hooks.json`)가 `Stop`·`PostToolUse`·`SubagentStart`·`SubagentStop` 을 등록한다. 서브에이전트 생성 도구 이름은 `Task` 가 아니라 `spawn_agent` 다
 - `install.sh install` 이 설치 시점의 ref 팁을 `.git/quiz-gate/epoch` 에 남긴다. 파일이 없을 때만 쓰므로 플러그인 업데이트가 게이트를 리셋하지 않는다
 - `install.sh uninstall` 이 `.git/quiz-gate/` 를 통째로 지운다. 무엇을 지웠는지 stderr 에 알린다
+- `tests/manifests.bats` — 두 훅 매니페스트의 `command` 문자열을 **실제로 실행해** 핸드셰이크가 남는지 확인한다. 변수 이름이 틀리면 JSON 은 멀쩡한데 모든 에이전트 커밋이 "사람"으로 분류되는데, 그 실패에 행동 커버리지가 전혀 없었다
+- `scripts/pending.sh` — 검증 대상 결정 규칙의 유일한 구현. 스킬과 `record-pass.sh` 가 둘 다 호출한다
+- `tests/pending.bats` — 스킬이 보는 집합과 기록되는 집합이 언제나 같다는 계약을 지킨다
 
 ### Fixed
 - **`pre-push` 가 `git pull` 로 들어온 남의 커밋, 원격 브랜치 분기점, `clone` 해 온 이력을 검사 대상으로 잡던 문제.** 이제 "사용자가 에이전트로 작업한 코드"만 본다 — 어느 리모트 추적 ref 에서든 도달 가능한 커밋과, 게이트 설치 이전의 로컬 이력이 전부 빠진다. 새 브랜치 경로는 이미 옳았고 기존 브랜치 경로만 틀렸다 ([D47](docs/DECISIONS.md))
@@ -24,6 +30,7 @@
 - **`jq` 없는 기계에서 통과할 방법이 없는 게이트가 만들어지던 문제.** 설치기가 `jq` 없이는 설치하지 않고, 설치 이후에 사라진 경우 훅이 경고와 함께 통과시킨다([D42](docs/DECISIONS.md))
 - **경로에 개행이 있으면 그 경로 하나가 아니라 뒤따르는 파일들이 통째로 게이트를 빠져나가던 문제.** 어긋난 `--raw` 스트림을 감지해 경고와 함께 커밋 전체를 통과시키고, `record-pass.sh` 는 쓰레기 기록을 거부한다([D43](docs/DECISIONS.md))
 - 실행 권한이 없는 훅이 "설치됨"으로 보고되던 문제 — git 은 그런 훅을 무시하므로 게이트가 조용히 없는 상태였다
+- **`git push --no-verify`(짧은 형태 포함)가 에이전트 훅을 무저항으로 통과하던 문제.** 프리필터가 `*commit*` 만 봤던 탓에 `--no-verify` 판정 자체가 이 명령에 아예 도달하지 못했다 — `pre-push` 를 잡으려고 만든 최종 경계가 정작 `pre-push` 를 우회하는 그 명령 앞에서 아무것도 하지 않았다. `--no-verify`/`-n` 판정만 `*push*` 도 함께 보게 넓혔다 — 마커 쓰기와 설치 건강검진은 여전히 `*commit*` 만 본다(넓히면 D44 가 되살아난다)
 
 ### Changed
 - `README.md` — 경로에 탭이 든 경우를 "복구 불가능"이라고 적었던 것을 바로잡았다(`--no-verify` 와 `uninstall` 로 회복된다). 건강검진이 매 Bash 호출마다 도는 것처럼 읽히던 설명과, 설치가 훅에 의해 자동 실행되고 커밋이 이어지는 것처럼 읽히던 설명도 실제 동작에 맞췄다
@@ -32,11 +39,6 @@
 - **문항 한글이 깨져 나오던 문제.** 도구 인자에 한글을 `\uXXXX` 로 손수 적다가 음절이 어긋났다(바뀐 → 바뀌, 멀쩡한 → 멀짎ka한). 이제 리터럴로만 쓴다(`skills/kkochikkochi/ask/claude-code.md`)
 - **Claude Code 에서 문항이 터미널 폭에 잘려 읽히지 않던 문제.** `AskUserQuestion` 의 `question`·`label` 이 잘려 사용자가 문제를 읽지 못한 채 막히는 것을 실측했다. 이제 한 번에 1문항만 내고, 문항 전문과 근거 코드는 모든 선택지의 `preview` 에 반복해 싣는다(`skills/kkochikkochi/ask/claude-code.md`)
 - 문항 문장 규칙을 `SKILL.md` §2 에 넣었다. 번역투·좌향 수식·이중 조사처럼 문항에서 반복되는 것만 표로 추렸고, 룰북 전문은 `skills/kkochikkochi/references/korean-sentences.md` 에 두었다([im-not-ai](https://github.com/epoko77-ai/im-not-ai) 사본, MIT). 더 손이 필요하면 `humanize-korean` 을 부르고, 설치돼 있지 않으면 그냥 진행한다([D46](docs/DECISIONS.md))
-
-### Added
-- `tests/manifests.bats` — 두 훅 매니페스트의 `command` 문자열을 **실제로 실행해** 핸드셰이크가 남는지 확인한다. 변수 이름이 틀리면 JSON 은 멀쩡한데 모든 에이전트 커밋이 "사람"으로 분류되는데, 그 실패에 행동 커버리지가 전혀 없었다
-- `scripts/pending.sh` — 검증 대상 결정 규칙의 유일한 구현. 스킬과 `record-pass.sh` 가 둘 다 호출한다
-- `tests/pending.bats` — 스킬이 보는 집합과 기록되는 집합이 언제나 같다는 계약을 지킨다
 
 ## [0.2.0] - 2026-07-30
 

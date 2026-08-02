@@ -93,7 +93,14 @@ is_null_sha() {
   esac
 }
 
-blocked=""       # 내용이 미검증인 (sha, 경로) — kkochikkochi 스킬로 풀 수 있다
+blocked=""       # 내용이 미검증인 (sha, 경로) — 대개 kkochikkochi 스킬로 풀린다.
+                 # 다만 전부는 아니다: ledger 도 staged diff 도 거친 적 없는
+                 # 채로 이력에 들어온 커밋(가장 큰 예: 사람이 직접 만든
+                 # 커밋 — README 한계 표)은 pending.sh 자체가 "검증할 것
+                 # 없음"으로 답해 퀴즈가 성립하지 않는다. 그래서 이 범주의
+                 # 메시지도 --no-verify(그리고 git fetch)를 함께 안내한다
+                 # (아래 메시지 조립부 참고) — unparseable 과 문구는 다르되
+                 # 탈출구 없이 영구히 막히지 않는다는 성질(D42)은 같다.
 unparseable=""   # 범위·스트림을 판정할 수 없어 막은 것 — 어떤 퀴즈로도 못 푼다.
                  # D00/D42 가 금지하는 "이해와 무관한 이유로 영구히 막힘"이
                  # 되지 않으려면, 이 범주는 반드시 --no-verify 탈출구를
@@ -318,7 +325,18 @@ PUSH_REFS
     echo
     printf '%s' "$blocked"
     echo
-    echo "kkochikkochi 스킬을 실행해 퀴즈를 통과한 뒤 다시 push 하세요."
+    echo "먼저 kkochikkochi 스킬을 실행해 퀴즈를 통과한 뒤 다시 push 하세요."
+    echo
+    # blocked 는 "퀴즈로 풀 수 있는 것"과 "리더·pending.sh 어느 쪽으로도
+    # 검증 대상을 계산할 수 없는 것"(가장 큰 예: 사람이 직접 만든 커밋 —
+    # README 한계 표에 문서화돼 있다)을 함께 담는다. 퀴즈를 냈는데
+    # pending.sh 가 "검증할 것이 없다"고 답하면 바로 그 경우다 — 그때 여기
+    # 서 있는 사람이 볼 수 있는 것은 이 안내뿐이므로, unparseable 의 탈출구를
+    # 여기서도 반복한다(D42): 스킬로 퀴즈를 내는 것이 여전히 첫 번째 시도이고,
+    # 아래는 그것이 아무것도 계산해내지 못했을 때를 위한 것이다.
+    echo "스킬을 실행했는데 검증할 대상이 없다고 답한다면(예: 사람이 직접 만든 커밋), 이 안내로는 풀 수 없다는 뜻입니다 — 다음을 시도하세요:"
+    echo "  - 로컬의 추적 ref 가 오래됐을 수 있습니다: git fetch 후 다시 push 하세요."
+    echo "  - 그래도 막히면 최후 수단으로 'git push --no-verify' 를 쓰세요."
   fi
 
   if [ -n "$unparseable" ]; then
