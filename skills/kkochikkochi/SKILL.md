@@ -23,7 +23,8 @@ bash "${CLAUDE_PLUGIN_ROOT:-$PLUGIN_ROOT}/scripts/pending.sh"
 
 `PostToolUse` 훅(Claude Code 는 `Task`, Codex 는 `spawn_agent` 로 발동한다)이나 `Stop` 훅이 서브에이전트 번들의 검증을 요구했다면, 위 인자 없는 호출 대신 이 절을 따른다.
 
-`PostToolUse` 가 요구한 경우, 그 요구가 알려준 `agent_id` 를 그대로 넘긴다.
+`PostToolUse` 가 요구한 경우, 그 요구가 알려준 `agent_id` 를 그대로 넘긴다 — 알림 메시지는
+`<agent_type> (<agent_id>)` 형태로 찍히므로(`bundle-notify.sh`), **괄호 안**의 값이 `agent_id` 다.
 
 ```bash
 bash "${CLAUDE_PLUGIN_ROOT:-$PLUGIN_ROOT}/scripts/pending.sh" --bundle <agent_id>
@@ -54,7 +55,7 @@ git show HEAD:<path>           # 변경 전 내용
 
 출력이 비어 있으면 두 경우를 구별해야 한다 — `pending.sh` 의 종료 코드로 갈린다(스크립트 헤더 주석의 0/1/2 계약, review):
 
-- **종료 코드 1** — 스테이징된 변경이 정말 없다. 사용자에게 알리고 종료한다.
+- **종료 코드 1** — 미검증 대상이 정말 없다. 인자 없이 불렀다면 "스테이징된 변경이 없다", `--bundle <agent_id>` 로 불렀다면 "이 번들엔 미검증이 없다", `--all-unverified` 로 불렀다면 "원장 전체에 미검증이 없다"는 뜻이다 — 어느 쪽이든 사용자에게 알리고 종료한다.
 - **종료 코드 2** — `pending`/원장을 읽지 못했다(형식이 깨졌거나 중간에 끊겼다). "스테이징된 게 없다"와는 다르다 — stderr 에 난 사유를 그대로 사용자에게 보여주고, 조용히 "검증할 게 없다"로 넘기지 않는다.
 
 단, **게이트가 막아서 이 스킬을 실행했는데 위 출력이 비어 있다면(종료 코드 1이든 2든) 그것은 버그다.** 사용자에게 "게이트가 막았지만 검증 대상을 계산할 수 없다"고 알린다.
@@ -172,6 +173,7 @@ Claude Code 에서는 `${CLAUDE_PLUGIN_ROOT}`, Codex 에서는 `${PLUGIN_ROOT}` 
 ### 예시 1 — 통과 기록 (여러 문항 형태를 함께 보여준다)
 
 ```bash
+# §1 에서 --bundle <agent_id> 나 --all-unverified 로 불렀다면 여기에도 그대로 붙인다
 cat <<'JSON' | bash "${CLAUDE_PLUGIN_ROOT:-$PLUGIN_ROOT}/scripts/record-pass.sh"
 {
   "questions": [
@@ -216,6 +218,7 @@ JSON
 ### 예시 2 — 출제할 것이 없을 때 (스킵)
 
 ```bash
+# §1 에서 --bundle <agent_id> 나 --all-unverified 로 불렀다면 여기에도 그대로 붙인다
 cat <<'JSON' | bash "${CLAUDE_PLUGIN_ROOT:-$PLUGIN_ROOT}/scripts/record-pass.sh"
 {
   "questions": [],
@@ -234,7 +237,7 @@ JSON
 
 1. **커밋이 여전히 막혀 있다고 사용자에게 알린다** — 통과 여부는 이 스크립트의 종료 코드가 정한다
 2. stderr 메시지를 그대로 사용자에게 보여준다
-3. stderr 가 가리키는 문제(예: `questions` 가 배열이 아님, 서술형 답변이 공백)에 맞춰 transcript 를 고쳐 **한 번 더** 시도한다
+3. stderr 가 가리키는 문제(예: `questions` 가 배열이 아님, 서술형 답변이 공백)에 맞춰 transcript 를 고쳐 **한 번 더** 시도한다 — 이때도 §1에서 쓴 것과 **같은 인자**(없음 / `--bundle <agent_id>` / `--all-unverified`)로 다시 부른다. 재시도라고 인자 없이 부르면 안 된다 — D45 가 막으려는 어긋남이 여기서도 그대로 난다
 4. 두 번째도 실패하면 멈추고 사용자에게 상황을 보고한다
 
 기록이 끝나면 사용자에게 커밋을 다시 시도하라고 알린다.

@@ -51,7 +51,17 @@ defer_sh() { bash "$PLUGIN_ROOT/scripts/defer.sh" "$@"; }
 }
 
 @test "git 저장소가 아니면 거부한다" {
-  cd "$(mktemp -d)"
+  local nonrepo
+  nonrepo="$(mktemp -d)"
+  cd "$nonrepo"
   run defer_sh on
   [ "$status" -ne 0 ]
+  cd "$TEST_REPO"
+  rmdir "$nonrepo"
+}
+
+@test "워크트리에서 켠 유예를 메인 저장소에서 본다" {
+  wt="$(add_worktree br-defer)"
+  ( cd "$wt" && defer_sh on )
+  [ -e "$(qdir)/defer" ]
 }
