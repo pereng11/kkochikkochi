@@ -426,6 +426,79 @@ setup_origin() {   # bare origin 을 만들고 현재 HEAD 를 main 으로 올�
   [[ "$output" == *"사라진 객체"* ]]
 }
 
+@test "epoch 의 모호한(ambiguous) 축약 16진수 줄이 push 를 막지 못한다" {
+  # cat-file --batch-check 는 없는 객체만 "missing" 으로 답하지 않는다 —
+  # 짧게 줄인 16진수가 객체 두 개 이상과 동시에 맞으면 "ambiguous" 를 낸다
+  # (실측). 예전 필터($2 != "missing")는 이 줄을 그대로 통과시켜, 존재하지
+  # 않는 객체 이름 대신 입력값(모호한 접두어) 그대로가 epoch_args 에
+  # 실렸다 — 그 값이 그대로 `git rev-list --not` 인자로 가면 rev-list 가
+  # 128 로 죽고, 이 훅의 fail-closed 경로가 그 순간 이 저장소의 모든 push
+  # 를 어떤 퀴즈로도 못 푸는 채로 영구 차단한다(위 "사라진 객체" 테스트와
+  # 달리 --no-verify 말고는 빠져나갈 길이 없는 unparseable 범주로 간다).
+  # 4-hex 접두어 충돌이 필요하다 — git 은 4자 미만의 접두어는 실제 존재
+  # 여부와 무관하게 그냥 "missing" 으로 답해(모호함 판정 자체를 안 한다)
+  # ambiguous 를 재현하지 못한다.
+  install_push_hook
+
+  # 4-hex 접두어가 겹치는 블롭 두 개를 찾는다. 내용을 "collide-<i>" 로
+  # 고정해 두면 실행마다 완전히 같은 시퀀스를 해시하므로 이 충돌은 사실
+  # 결정적이다(무작위가 아니다) — 그래도 상한을 두고 못 찾으면 skip 하는
+  # 것은, 흔들리는 테스트를 결함으로 보는 이 프로젝트의 원칙(helper.bash
+  # 의 with_tty 주석 참고)을 그대로 지키기 위해서다. 블롭 하나마다 git
+  # 프로세스를 새로 fork 하면(hash-object --stdin) 수백 번의 프로세스
+  # 생성 비용이 쌓이므로, --stdin-paths 로 한 번의 git 호출에 여러 개를
+  # 묶어 만든다.
+  batch_dir="$(mktemp -d)"
+  declare -A seen_prefix
+  collide_prefix=""
+  i=0
+  cap=5000
+  batch_size=500
+  while [ -z "$collide_prefix" ] && [ "$i" -lt "$cap" ]; do
+    filelist="$batch_dir/list.txt"
+    : > "$filelist"
+    end=$((i + batch_size))
+    [ "$end" -gt "$cap" ] && end="$cap"
+    j=$i
+    while [ "$j" -lt "$end" ]; do
+      f="$batch_dir/f$j"
+      printf 'collide-%d\n' "$j" > "$f"
+      printf '%s\n' "$f" >> "$filelist"
+      j=$((j + 1))
+    done
+    shas="$(git hash-object -w --stdin-paths < "$filelist")"
+    for sha in $shas; do
+      prefix="${sha:0:4}"
+      if [ -n "${seen_prefix[$prefix]:-}" ]; then
+        collide_prefix="$prefix"
+        break
+      fi
+      seen_prefix[$prefix]=1
+    done
+    i="$end"
+  done
+  rm -rf "$batch_dir"
+  [ -n "$collide_prefix" ] || skip "4-hex 접두어 충돌을 $cap 회 안에 못 찾음"
+
+  mkdir -p "$(qdir)"
+  {
+    git rev-parse HEAD
+    printf '%s\n' "$collide_prefix"
+  } > "$(qdir)/epoch"
+
+  printf 'MINE\n' > mine.ts; git add mine.ts
+  stub_covered_line mine.ts
+  commit_as_human -qm "my agent work"
+  run run_push_hook "$NULL_SHA" "$(git rev-parse HEAD)"
+  # ambiguous 줄이 그대로 rev-list --not 인자로 새면 rev-list 가 128 로
+  # 죽어 이 훅의 fail-closed 경로가 이 push 를 영구히 막는다.
+  [ "$status" -eq 0 ]
+  # 조용히 버리지 않고 경고했는지 확인한다 — 필터가 "사라진 객체" 와 같은
+  # 문구를 쓰는 것은 의도한 그대로다(위 테스트와 코드 경로를 공유한다).
+  [[ "$output" == *"사라진 객체"* ]]
+  [[ "$output" == *"$collide_prefix"* ]]
+}
+
 @test "epoch 의 16진수 아닌 줄은 rev-list 인자로 새지 않는다" {
   # "--all" 만으로는 이 테스트가 16진수 검사를 실제로 지키지 못한다(실측,
   # 코디네이터 지적) — `git cat-file -e "--all"` 은 대시로 시작하는 값을 git

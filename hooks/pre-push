@@ -136,18 +136,27 @@ if [ -e "$EPOCH" ]; then
     # 선형으로 비례해 push 마다 비용이 든다(실측: 800줄에서 6.5초 vs
     # 배치 0.05초 — install.sh 가 refs/heads·refs/tags·refs/remotes 팁을
     # 전부 적으므로 태그·리모트 브랜치가 많은 저장소에서는 흔한 규모다).
-    # `--batch-check` 는 없는 객체를 만나면 지정한 포맷을 무시하고
-    # "<입력> missing" 한 줄을 낸다 — 그래서 $2 != "missing" 이 존재
-    # 필터고, missing 줄의 $1 이 사라진 객체 경고에 쓸 원래 값이다.
+    # `--batch-check` 는 존재하는 객체에 한해서만 지정한 포맷을 낸다.
+    # 못 찾으면 포맷을 무시하고 "<입력> missing" 한 줄을 내지만, 그게
+    # 유일한 실패 형태가 아니다 — 짧게 줄인 16진수가 여러 객체와 동시에
+    # 맞으면 "<입력> ambiguous" 를 낸다(실측). 예전 코드는 $2 != "missing"
+    # 로 존재를 판정했는데, ambiguous 줄은 그 조건을 통과해 $1(입력값 그대로,
+    # 진짜 객체 이름이 아니다)이 epoch_args 에 실렸다 — 그 값이 그대로
+    # `git rev-list --not` 인자로 가면 rev-list 가 128 로 죽어 fail-closed
+    # 경로가 모든 push 를 영구 차단한다(다른 어떤 --not 대상 없는 사유와
+    # 달리 이건 퀴즈로도 못 푼다). missing·ambiguous 둘 다 잡으려고
+    # 블랙리스트를 계속 늘리는 대신, 알려진 객체 타입 4종(commit·tag·tree·
+    # blob)만 화이트리스트로 통과시킨다 — batch-check 가 낼 수 있는 실패
+    # 상태를 전부 몰라도(새 상태가 앞으로 늘어도) 안전한 쪽으로만 틀린다.
     if [ -n "$hex_lines" ]; then
       epoch_args="$(printf '%s' "$hex_lines" \
         | git cat-file --batch-check='%(objectname) %(objecttype)' 2>/dev/null \
         | awk '
-            $2 == "missing" {
-              print "kkochikkochi: 경고 — epoch 의 사라진 객체를 무시합니다: " $1 > "/dev/stderr"
+            $2 == "commit" || $2 == "tag" || $2 == "tree" || $2 == "blob" {
+              printf " %s", $1
               next
             }
-            { printf " %s", $1 }
+            { print "kkochikkochi: 경고 — epoch 의 사라진 객체를 무시합니다: " $1 > "/dev/stderr" }
           ')"
     fi
   else
