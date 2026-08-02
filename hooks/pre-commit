@@ -94,7 +94,13 @@ for marker in "$QDIR/marker"/*; do
   case "$mtime" in '' | *[!0-9]*) mtime=0 ;; esac
   age=$((now - mtime))
   # 미래 시각(시계 오차·NFS)이면 age 가 음수다 — 그것도 "신선함"이 아니다.
-  [ "$age" -ge 0 ] && [ "$age" -le "$FRESH_SECS" ] || continue
+  #
+  # `A && B || continue` 로 쓰지 않는다. 여기서는 의미가 같지만 shellcheck
+  # 0.9 가 SC2015 로 잡아 CI 린트를 깨뜨린다(로컬 0.11 은 잡지 않아 로컬
+  # 검증만으로는 절대 드러나지 않는다 — 실측). 조건을 뒤집어 명시적으로 쓴다.
+  if [ "$age" -lt 0 ] || [ "$age" -gt "$FRESH_SECS" ]; then
+    continue
+  fi
 
   line="$(head -n 1 "$marker" 2>/dev/null)"
   this_agent="$(printf '%s' "$line" | cut -f1)"
