@@ -1,188 +1,138 @@
+[![CI](https://github.com/pereng11/kkochikkochi/actions/workflows/ci.yml/badge.svg)](https://github.com/pereng11/kkochikkochi/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+![Claude Code · Codex](https://img.shields.io/badge/Claude%20Code-%C2%B7%20Codex-black)
+
 # KkochiKkochi 🦡
 
 > **KkochiKkochi** *(kko-chi-kko-chi)* — Korean, adv. *questioning in relentless, minute detail.*
-> It won't let you commit code you can't explain.
 
-AI 코딩 에이전트는 사람이 읽는 속도보다 빠르게 코드를 만든다. 그래서 **사람의 이해가 병목이자 리스크**가 된다. 린터와 테스트는 코드를 검증하지만 사람의 이해는 검증하지 않는다.
+**Not a tool to ship faster.
+A tool to ship responsibly.**
 
-KkochiKkochi 는 **에이전트가 만든 커밋**을 가로채, 방금 무엇을 바꿨는지 묻는다. 답하지 못하면 커밋이 막힌다. Claude Code 와 Codex 를 지원한다.
+How many lines did you merge today? How many did you actually read?
 
-## 무엇을 막고 무엇을 막지 않는가
+The bottleneck in agentic coding was never typing speed. It's your own
+comprehension — and the cheapest thing to skip is understanding.
 
-이것이 가장 먼저 알아야 할 것이다 — 잘못 이해하면 "막혀야 하는데 안 막혔다"거나 "안 막혀야 하는데 막혔다"로 놀라게 된다.
+KkochiKkochi puts a wall exactly where the skipping happens: your agent
+stops, and waits for *your* answer. Miss it, and the commit does not land.
 
-| 이 커밋은... | 게이트가 켜지는가 |
-|---|---|
-| Claude Code 또는 Codex 가 만든 커밋 | **켜짐.** 이 도구가 존재하는 이유 |
-| 사람이 터미널이나 IDE 에서 직접 만든 커밋 | **꺼짐.** 의도된 동작 — 그 사람은 거기 있었고, 이해가 병목이 아니다. 옆에서 에이전트가 돌고 있어도 그렇다: 핸드셰이크는 에이전트가 **커밋하려 할 때만** 남고([D44](docs/DECISIONS.md)), 터미널 커밋은 TTY 신호가 한 번 더 구제한다([D41](docs/DECISIONS.md)) — 단, push 시점은 다르다 ([한계](#한계)) |
-| `git revert` / `cherry-pick` / `merge` | **꺼짐.** git 이 이 명령들에서 `pre-commit` 훅을 아예 호출하지 않는다(측정 확인) |
-| `git commit --no-verify` (짧게 `-n`) | **꺼짐, 우회 가능.** 에이전트 훅이 두 형태 모두 감지해 거부를 시도하지만 최선 노력일 뿐이다 |
-| `git push --no-verify` (짧게 `-n`) | **꺼짐, 우회 가능.** `git commit --no-verify` 와 동일하다 — 에이전트 훅이 `push` 도 같이 보고 거부를 시도하지만 최선 노력일 뿐이다. 마커를 남기는 프리필터는 여전히 `commit` 만 본다([D44](docs/DECISIONS.md)) — 이 둘을 같이 넓히지 않는다. 명령에 `git`·`g` 토큰이 있을 때만 이 판정이 들어간다([한계](#한계)) — 다른 git 별칭(`gc` 등)으로 `--no-verify` 를 곁들이면 잡지 못한다 |
-| 사람이 자기 터미널에서 친 커밋 — 옆 창에 에이전트가 떠 있어도 | **꺼짐.** 실제 터미널(TTY) 신호가 핸드셰이크보다 우선한다([D41](docs/DECISIONS.md)) — 단, push 시점은 다르다 ([한계](#한계)) |
-| 지원 목록에 없는 에이전트가 만든 커밋 | **꺼짐.** 의도된 동작 — 애매한 경우는 통과시킨다 |
-| `core.hooksPath` 저장소에서 사용자가 자동 설치를 거부한 경우 | **꺼짐.** 그 저장소엔 게이트가 없다 |
+Works with Claude Code and Codex.
 
-나머지 한계는 [한계](#한계) 절에.
+**English** · [한국어](README.ko.md)
 
-## 동작
+## See it work
 
 ```
 $ git commit -m "add auth middleware"
 
-🦡 KkochiKkochi — 이 커밋에 아직 검증되지 않은 변경이 있습니다.
-
+🦡 KkochiKkochi — this commit still contains changes nobody has verified.
    src/auth/middleware.ts
    src/lib/session.ts
+Run the kkochikkochi skill, pass the quiz, then commit again.
 
-이 변경을 이해했는지 먼저 확인해야 합니다.
-kkochikkochi 스킬을 실행해 퀴즈를 통과한 뒤 다시 커밋하세요.
-```
-
-에이전트가 스킬을 실행하면 퀴즈가 이어진다:
-
-```
-Q1. 이 변경으로 auth 미들웨어가 통과시키는 경로는?
-    A) /api/* 전체
-    B) /api/public/* 을 제외한 전체
-    C) 정적 에셋만
-    D) 모르겠다
-
+Q1. Which paths does the auth middleware let through after this change?
+    A) all of /api/*                    C) static assets only
+    B) everything except /api/public/*  D) I don't know
 → B  ✓
 
-Q2. 세션 저장소를 Redis 대신 JWT 로 간 이유를 한 문장으로 적으세요.
+Q2. In one sentence: why JWT for the session store instead of Redis?
 → ...
-
-통과했습니다. 다시 커밋하세요.
+Passed. Commit again.
 ```
 
-Claude Code 에서는 객관식이 `AskUserQuestion` 으로 클릭 선택된다. Codex 에는 그 대응 도구가 없어 위처럼 평문으로 제시되고 타이핑으로 답한다 — 문항 내용·채점·오답 루프는 두 에이전트에서 동일하다.
+In Claude Code the multiple-choice questions arrive through `AskUserQuestion` and you click an answer. Codex has no equivalent tool, so they are printed as plain text and you type the answer — the questions, the grading, and the wrong-answer loop are the same on both.
 
-## 동작 원리 (요약)
+## Install
 
-기본 경로에는 두 개의 훅이 관여하고, 역할이 분명히 다르다.
-
-1. **에이전트 훅** (Claude Code / Codex 의 `PreToolUse`) — 매 `Bash` 호출 직전에 실행되지만, **커맨드에 `commit` 이 들어 있을 때만** 무언가를 한다: "에이전트가 지금 커밋하려 한다"는 핸드셰이크를 남기고, 이 저장소에 git 훅이 설치돼 있는지(그리고 낡지 않았는지) 건강검진한다. 커밋과 무관한 명령에서는 아무 흔적도 남기지 않는다 — 그래야 에이전트가 무언가 하고 있는 동안 들어온 IDE·터미널 커밋이 에이전트 커밋으로 오인되지 않는다([D44](docs/DECISIONS.md)). **이 훅 자체는 게이트가 아니다.** 여기서 뭔가 놓쳐도 안전은 깨지지 않는다.
-2. **git `pre-commit` 훅** — 실제 게이트. git 이 커밋 직전에 직접 호출하므로, 이 훅 안에서 `git diff --cached` 는 **커밋될 내용 그 자체**다. 커맨드 문자열을 파싱하지 않는다. 핸드셰이크가 신선하면(600초=10분 이내 — 복합 명령·체이닝된 훅 실행 시간까지 덮으려고 넉넉히 잡았다) 이 커밋을 에이전트가 만든 것으로 보고, 미검증 변경이 있으면 막는다.
-
-판별 순서는 **실제 터미널(TTY) → 핸드셰이크 → 알려진 환경변수**다. 훅의 fd 1/2 에 진짜 터미널이 붙어 있으면 사람이 지금 손으로 치고 있다는 뜻이므로 다른 어떤 신호보다 우선해 통과시킨다([D41](docs/DECISIONS.md)). 그다음이 핸드셰이크, 그다음이 직접 관찰한 환경변수(`CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`)다. 그래도 애매하면 통과시킨다.
-
-서브에이전트가 커밋할 때는 층이 하나 더 붙는다. 서브에이전트는 사람에게 물을 수 없어서
-`pre-commit` 에서 막으면 통과할 방법이 없다. 그래서 막지 않고 **원장(`ledger.tsv`)에 적어
-두고** 뒤에서 강제한다.
-
-| 트리거 | 하는 일 |
-|---|---|
-| `SubagentStart` / `SubagentStop` | 번들을 열고 봉인한다 (`agents/<hash>`) |
-| `PostToolUse` (Claude Code `Task` / Codex `spawn_agent`) | 봉인된 번들의 검증을 부모 에이전트에게 요구한다 |
-| `Stop` | 미검증이 남은 채로 턴이 끝나는 것을 막는다 |
-| git `pre-push` | 최종 경계. Stop 은 Esc 로 빠져나갈 수 있다 |
-
-## 설치
-
-### Claude Code
-
+**Claude Code**
 ```
 /plugin marketplace add pereng11/kkochikkochi
 /plugin install kkochikkochi
 ```
-
-### Codex
-
+**Codex**
 ```
 codex plugin marketplace add pereng11/kkochikkochi
 codex plugin add kkochikkochi@kkochikkochi
 ```
 
-### 저장소별 git 훅 설치
+Git hooks are per repository, and you rarely have to install them yourself: the first time an agent tries to commit here, the agent hook notices that the git hook is absent or stale, refuses that commit, and hands the agent a runnable install command — the agent runs it and then tries the commit again, since the refused commit does not resume on its own. The exception is a repository using `core.hooksPath`, where the effective hook directory is tracked by the repository, so the agent asks you before writing to it ([D32](docs/DECISIONS.md)).
 
-플러그인 설치는 훅 스크립트를 플러그인 캐시에 놓을 뿐, 저장소의 `.git/hooks/`에는 닿지 못한다. git 훅은 저장소마다 따로 설치해야 하고, git 이 추적하지 않으므로 `git clone` 을 따라가지도 않는다.
+By hand: `bash scripts/install.sh install|uninstall|status`, where `status` exits `0` installed and current, `1` not installed, `2` refused because the repository uses `core.hooksPath`, `3` ours but stale. An existing `pre-commit` hook is chained rather than replaced, and runs first. The gate reads what an agent is about to commit. It never touches commits you type yourself.
 
-**직접 할 필요는 보통 없다.** 이 저장소에서 에이전트가 처음 커밋을 시도하면 **에이전트 훅**이 git 훅의 부재(또는 낡음)를 감지해 그 커밋을 거부하고, 거부 사유에 그대로 실행 가능한 설치 명령을 담아 준다. 에이전트가 그 명령을 실행한 뒤 **커밋을 다시 시도**하면 된다 — 거부된 커밋 자체가 이어지는 것은 아니다. 예외는 `core.hooksPath`(husky 등)를 쓰는 저장소뿐이다 — 그 경우 실효 훅 디렉터리가 저장소에 추적되는 곳이라, 에이전트가 말없이 쓰지 않고 사용자에게 확인을 구한다.
+Requires `git` and `jq`. Optionally the `humanize-korean` skill from [im-not-ai](https://github.com/epoko77-ai/im-not-ai), which polishes the wording of questions — the gate works the same without it ([D46](docs/DECISIONS.md)).
 
-수동으로 설치·제거·상태 확인을 하려면:
+Setting this up with an agent? See [AGENTS.md](AGENTS.md).
 
-```bash
-bash scripts/install.sh install
-bash scripts/install.sh uninstall
-bash scripts/install.sh status
-```
+## What gets gated
 
-`status` 의 종료 코드: `0` 설치됨(그리고 최신) · `1` 미설치 · `2` `core.hooksPath` 저장소라 설치를 거부함 · `3` 우리 훅이지만 낡음(`install` 을 다시 실행하면 된다).
-
-기존 `pre-commit` 훅이 있으면 자동으로 체이닝된다 — 옮겨 두고 먼저 실행하며, 0이 아닌 종료 코드면 그대로 커밋을 막는다(린트·테스트가 거부하는 코드에 이해도 퀴즈를 내는 건 순서가 틀렸다).
-
-필요 도구: `git`, `jq`
-
-선택: [im-not-ai](https://github.com/epoko77-ai/im-not-ai) 의 `humanize-korean` — 문항 문장을 다듬을 때 쓴다. 없어도 게이트는 그대로 동작한다([D46](docs/DECISIONS.md)).
-
-## 무엇을 묻는가
-
-| 축 | 예시 |
+| This commit is... | Gate |
 |---|---|
-| 변경 사실 | 어떤 파일의 무엇이 바뀌었나 |
-| 영향·리스크 | 이 변경으로 무엇이 깨질 수 있나 |
-| 설계 의도 | 왜 이 방식을 골랐고 무엇을 버렸나 |
-| 재현 가능성 | X 를 바꾸려면 어디를 건드려야 하나 |
+| made by Claude Code or Codex | **On.** This is the reason the tool exists. |
+| typed by a human, in a terminal or an IDE | **Off.** By design — they were there, so comprehension is not the bottleneck ([D41](docs/DECISIONS.md), [D44](docs/DECISIONS.md)). |
+| `git revert` · `cherry-pick` · `merge` | **Off at commit time.** git never calls `pre-commit` for these (measured). `pre-push` still re-reads what a merge commit newly created ([D13](docs/DECISIONS.md), [D47](docs/DECISIONS.md)). |
+| `git commit --no-verify` (or `-n`) | **Bypassable.** The agent hook tries to refuse it — best effort, not a guarantee ([D29](docs/DECISIONS.md)). |
 
-문항은 최대 5개. 원칙적으로 최소 1개이며, 질문거리가 전혀 없는 경우(예: lockfile 재생성, 포매팅만)에 한해 예외적으로 0개 + 사유 기록으로 통과시킨다. 목표 3분 — 한 번에 다 맞히는 경우만이 아니라 오답 재시도 루프까지 포함한 시간이다. 근거를 코드나 대화에서 특정할 수 없는 문항은 출제되지 않는다.
+A commit made by an agent that is not on that list is treated as an ambiguous case, and ambiguous cases pass ([D35](docs/DECISIONS.md)).
 
-## 게이트가 통과시키는 git 커맨드
+## What it asks
 
-- `git revert`, `git cherry-pick`, `git merge` — git 이 이 명령들에서 `pre-commit` 을 아예 호출하지 않는다(측정 확인. 클린 병합은 `pre-merge-commit` 을 대신 부른다). 파싱해서 걸러낸 게 아니라 git 자체의 동작이다. revert 는 특히 비상 롤백 레버라, 걸었다면 사고를 키웠을 것이다
-- 위 작업이 충돌해 사용자가 직접 `git commit` 으로 마무리할 때 — 진행 중인 merge/cherry-pick/revert/rebase 마커(`MERGE_HEAD` 등)가 있으면 그 커밋도 대상에서 제외한다
-- `git commit --amend` 로 **메시지만** 고칠 때 — 워크트리 내용이 HEAD 와 같아 커밋될 변경분이 없기 때문이다. **내용을 더 얹는 amend 는 그 추가분만큼 게이트 대상이다** — 검증 없이 슬쩍 끼워 넣는 경로를 막기 위해서다
-- 게이트 자체에 문제가 생겼을 때 (fail-open)
-- `git pull` 로 들어온 남의 커밋, 원격 브랜치에서 분기할 때 딸려온 기준점, `git clone` 해 온 이력 — 어느 리모트 추적 ref 에서든 도달 가능하면 `pre-push` 가 보지 않는다 ([D47](docs/DECISIONS.md))
-- 게이트를 설치하기 전의 로컬 이력 — 설치 시점의 ref 팁을 `.git/quiz-gate/epoch` 에 적어 두고 그보다 앞선 것은 보지 않는다. 게이트가 볼 수 있었던 적이 없는 커밋이다
-
-## 어떻게 기억하는가
-
-파일 내용의 blob SHA 를 `.git/quiz-gate/covered.tsv` 에 `(SHA, 경로, pass_id)` 형태로 기록한다. 파일을 한 글자라도 고치면 SHA 가 바뀌어 그 파일만 다시 물어본다. 한 번 통과한 변경은 여러 커밋으로 나눠 올려도 다시 묻지 않는다.
-
-문답 전문은 `.git/quiz-gate/passes/<pass_id>.json` 에 1건 1파일로 남는다 — 검증에는 쓰이지 않고 감사 기록용이다. 에이전트 핸드셰이크는 `.git/quiz-gate/marker/<agent_id>`(메인 스레드는 `main`)에 에이전트별로 남는다 — 병렬 서브에이전트가 같은 파일을 덮어쓰지 않기 위해서다.
-
-서브에이전트가 만든 미검증 변경은 `.git/quiz-gate/ledger.tsv` 에, 번들의 시작·봉인 시각은
-`.git/quiz-gate/agents/` 에 남는다. 게이트가 이 저장소에 설치된 시점의 ref 팁은
-`.git/quiz-gate/epoch` 에 남고, `pre-push` 가 그보다 앞선 이력을 검사에서 뺄 때 쓴다.
-
-기록은 `.git/` 안에만 있고 절대 커밋되지 않는다.
-
-## 명령
-
-| 명령 | 설명 |
+| Axis | Example |
 |---|---|
-| `/kk` | 지금 스테이징된 변경으로 퀴즈를 받는다 |
-| `/kk-log` | 지금까지의 검증 기록과 취약한 축을 본다 |
-| `/kk-defer` | 이번 턴은 서브에이전트 번들 퀴즈를 미루고 턴 끝에 몰아 받는다 (턴 끝까지만 — 영구 우회 아님) |
+| What changed | Which file, and what in it |
+| Impact and risk | What could this break |
+| Design intent | Why this way, and what was rejected |
+| Reproducibility | Where would you go to change X |
 
-## 한계
+At most five questions, and as a rule at least one — the exception is a change with nothing to ask about, such as a regenerated lockfile or formatting alone, which passes with zero questions and a recorded reason. The three-minute target counts the wrong-answer retry loop, not only a clean first pass, and a question whose grounds cannot be pointed at in the code or the conversation is never asked ([D14](docs/DECISIONS.md), [D17](docs/DECISIONS.md), [D19](docs/DECISIONS.md)).
 
-v2 마이그레이션과 v3(`pre-push` 최종 경계, D47) 작업 중 실측으로 확인된 것들이다. 추측이 아니다.
+## How it holds
 
-| 한계 | 설명 |
+Two hooks split the work. The agent hook (`PreToolUse`) does anything only when the command contains `commit`: it leaves a handshake saying an agent is about to commit, and it health-checks whether the git hook is installed and current. It is not itself the gate — nothing about safety breaks if it misses something there. The gate is git's `pre-commit`, and because git calls it directly, the `git diff --cached` inside it is the content of the commit itself, so no command string has to be parsed ([D28](docs/DECISIONS.md), [D30](docs/DECISIONS.md), [D44](docs/DECISIONS.md)).
+
+| Trigger | What it does |
 |---|---|
-| **`git merge` 는 커밋 시점 게이트를 우회하지만, push 시점에 `pre-push` 가 다시 본다** | 클린 병합에서 git 은 `pre-commit` 이 아니라 `pre-merge-commit` 을 호출한다. 우리는 그 훅을 설치하지 않으므로 커밋 시점에는 확실히 우회된다. 다만 `pre-push` 는 push 범위의 모든 커밋을 `git diff-tree --cc`(결합 diff)로 다시 훑으므로, 병합 커밋이 새로 만든 내용(그 어느 parent 에도 없던 충돌 해소 내용)이 미검증이면 push 시점에 막힌다. 어느 한쪽 parent 와 완전히 같은(자동 병합된) 파일은 그 parent 를 만든 원래 커밋에서 이미 검사 대상이므로 다시 보지 않는다 — 그 원래 커밋 자체가 아직 push 되지 않았다면 그쪽에서 걸린다 |
-| **지원 목록에 없는 에이전트는 게이트되지 않는다** | 판별은 Claude Code 와 Codex 만 인식한다. 다른 에이전트가 만든 커밋은 "애매한 경우"로 분류돼 통과한다. 의도된 설계다 — 모르는 에이전트를 잡으려고 IDE·터미널 커밋까지 막으면 도구가 꺼진다 |
-| **pty 로 도구를 감싸는 에이전트 하네스는 놓친다** | 훅의 fd 1/2 에 진짜 터미널(TTY)이 붙어 있으면 **핸드셰이크와 환경변수 모두를 제치고** "사람"으로 판정한다([D41](docs/DECISIONS.md)). 한 창에서 에이전트를 돌리면서 옆 창에서 손으로 치는 커밋을 막지 않기 위한 설계이며(D00), 지원하는 두 에이전트의 Bash 도구는 파이프를 물려주므로 실제로 사람과 에이전트를 정확히 가른다. 대가로 도구를 pty 로 감싸는 하네스는 조용히 새어나간다 |
-| **`--no-verify` 는 git 훅 자체를 건너뛴다** | 에이전트 훅이 커맨드 문자열에서 `--no-verify` 와 짧은 형태 `-n`(`-nm`·`-qn` 등 묶음 포함)을 감지해 거부하지만, 토크나이저 없는 유계 검사라 최선 노력일 뿐 보장이 아니다. 오탐 방향으로 헐겁게 잡는다 — **하이픈 하나로 시작하는 낱말 안에 `n` 이 있으면 무엇이든 걸린다.** 커밋 메시지 안의 ` -n `, 그리고 `git log --oneline \| head -n 20 && git commit -m x` 처럼 커밋과 무관한 `-n` 도 포함된다. 오탐은 왕복 한 번이고 미탐은 게이트가 흔적 없이 사라지는 것이기 때문이다. 단, 이 판정은 명령에 `git`·`g` 토큰이 있을 때만 들어간다 — `grep -rn push src/` 처럼 `commit`·`push` 글자와 짧은 `-n` 묶음을 우연히 담는(그러나 git 과 무관한) 명령의 오탐을 줄이기 위해서다. 그 대가로 **`git`·`g` 가 아닌 다른 git 별칭(예: `gc`, `gcmsg`, 셸에 직접 만든 별칭)으로 `--no-verify` 를 곁들여 commit·push 하면 이 검사가 잡지 못한다** — 좁지만 실재하는 미탐이며, 사람이 받아들인 트레이드오프다 |
-| **커밋처럼 보이지 않는 경로로 커밋하는 에이전트는 게이트되지 않는다** | 핸드셰이크는 커맨드 문자열에 `commit` 이 들어 있을 때만 남는다([D44](docs/DECISIONS.md)). 에이전트가 `git commit` 을 스크립트 안에 감춰 실행하면(`bash deploy.sh`, `make release` 등) 마커가 없어 그 커밋은 "사람"으로 분류돼 통과한다. 매 `Bash` 호출마다 마커를 남기던 이전 방식은 이 경우를 잡았지만, 그 대가로 **에이전트가 무엇이든 하고 있는 동안 들어온 IDE 커밋을 전부 막았다.** D00 은 "막아야 할 커밋을 정확히 막는 것"이 목표이지 "더 많이 막는 것"이 아니라고 말하므로 이 방향을 택했다 |
-| **`git -C <다른 저장소> commit` 은 대체로 게이트되지 않는다** | 핸드셰이크는 에이전트 훅이 도는 **현재 디렉터리의 저장소**에 남는다. 다른 저장소를 커밋하면 그쪽엔 마커가 없어 환경변수 신호에만 기대게 된다 — Claude Code 는 `CLAUDECODE` 덕에 우연히 걸리지만 Codex 는 식별용 환경변수를 아예 내보내지 않아 전혀 걸리지 않는다 |
-| **`core.hooksPath` 저장소는 자동 설치되지 않는다** | husky 등으로 실효 훅 디렉터리가 바뀐 저장소에서는 그 디렉터리가 저장소에 추적되므로, 에이전트가 말없이 쓰지 않고 사용자에게 확인을 구한다. 사용자가 거부하면 그 저장소엔 게이트가 없다 |
-| **경로에 탭 문자가 있으면 퀴즈로는 통과시킬 수 없다** | `covered.tsv` 가 탭으로 필드를 구분하므로, 파일명에 실제 탭 바이트가 든 경로는 커버리지를 기록할 수 없다. 매우 드문 사례다. **갇히지는 않는다** — `git commit --no-verify` 로 그 커밋을 통과시키거나, `bash scripts/install.sh uninstall` 로 게이트를 걷어내면 된다. `pre-push` 도 같은 이유로 같은 커밋을 막으므로, push 할 때는 `git push --no-verify` 가 추가로 필요하다 |
-| **경로에 개행 문자가 있으면 `pre-commit` 은 경고와 함께 통과시키지만 `pre-push` 는 막는다** | `--raw -z` 스트림을 셸에서 다루려면 NUL 을 개행으로 바꿔야 하는데, 경로 안의 진짜 개행이 그 짝짓기를 깨뜨린다. `pre-commit` 은 어긋난 채로 판정을 이어가지 않고 **경고와 함께 커밋 전체를 통과시킨다**(fail-open, D42) — 이해와 무관한 이유로 커밋을 영구히 막지 않기 위해서다. `record-pass.sh` 는 같은 상황에서 쓰레기 기록을 남기지 않으려고 기록을 거부한다. `pre-push` 는 정반대로 판단한다: 이 층은 최종 경계라 조용히 열리는 것 자체가 구멍이므로 **fail-closed** 한다 — `covered.tsv` 를 채울 방법이 없으니(`pending.sh` 도 같은 스트림을 형식 오류로 거부한다) 어떤 퀴즈로도 풀 수 없고, 대신 `git push --no-verify` 를 거부 메시지에 안내한다 |
-| **`jq` 가 없으면 게이트가 열린다** | 퀴즈 통과를 기록하는 `record-pass.sh` 가 `jq` 를 필요로 하므로, `jq` 없이 게이트만 켜 두면 통과할 방법이 없는 채로 커밋이 막힌다. 설치기가 `jq` 없는 환경에서 설치를 거부하고, 설치 이후에 사라진 경우에는 훅이 경고와 함께 통과시킨다 |
-| **git 훅은 `git clone` 을 따라가지 않는다** | `.git/hooks/` 는 git 이 추적하지 않는다. 저장소를 새로 clone 하면 게이트가 없는 상태로 시작하고, 그 저장소에서 다시 설치해야 한다(에이전트가 자동으로 함) |
-| **신뢰 경계는 보안이 아니라 규율 장치다** | 에이전트가 퀴즈를 건너뛰고 `record-pass.sh` 를 직접 호출하는 것을 기술적으로 막지 않는다. 방어선은 빈 문항·공백 답변 거부와 사후 감사뿐이다 |
-| **기록은 자동으로 정리되지 않는다** | `covered.tsv` 와 `passes/*.json` 은 커밋마다 계속 쌓인다. TTL 이나 자동 트림은 범위 밖이다([D18](docs/DECISIONS.md)) |
-| **`pre-push` 는 사람이 손으로 만든 커밋도 막는다** | 이 층은 출처를 보지 않는다 — 커밋 시점의 TTY·핸드셰이크 신호를 사후에 복원할 방법이 없기 때문이다. `pre-commit` 이 통과시킨 사람 커밋도 push 때는 퀴즈를 요구한다. 게이트 설치 이전의 이력과 리모트에서 온 것은 [D47](docs/DECISIONS.md) 로 빠진다. **갇히지는 않는다** — 커밋이 이미 리모트에 있는데 로컬의 추적 ref 가 stale 해서 걸렸을 뿐이라면 `git fetch` 로 먼저 풀리는지 보고, 그래도 막히면 `git push --no-verify` 가 최후 수단이다 |
-| **`cherry-pick`·squash 로 가져온 남의 커밋은 제외되지 않는다** | 새 SHA 라 도달성 판정에 안 걸린다. 제대로 하려면 patch-id 를 리모트 전체에 돌려야 하는데 push 마다 비용이 크다. **갇히지는 않는다** — 막히면 퀴즈로 풀린다. `pre-commit` 은 `CHERRY_PICK_HEAD` 를 보고 이미 통과시키므로 두 층의 판단이 갈리는 지점이다 |
-| **epoch 없는 버전에서 업그레이드하면 미검증 커밋이 1회 면제된다** | `epoch` 은 파일이 없을 때만 쓰이므로, 이 기능 이전 버전을 쓰던 저장소는 업그레이드 시점의 ref 팁이 epoch 이 된다. 그때까지 쌓인 미검증 커밋은 한 번 면제된다. 1회성이며 그 뒤로는 안정 상태다 |
-| **리모트 추적 ref 가 stale 하면 이미 리모트에 있는 커밋도 검사한다** | `git fetch` 하면 풀린다. 안전 방향이라 그대로 둔다 |
-| **`install.sh uninstall` 은 검증 이력을 함께 지운다** | `.git/quiz-gate/` 를 통째로 지운다. `passes/*.json`(`/kk-log` 가 읽는 감사 기록)은 복구되지 않는다. 무엇을 지웠는지 stderr 에 알린다 |
-| **워크트리는 `quiz-gate` 를 공유한다** | 상태가 `--git-common-dir` 아래 있어 한 워크트리에서 `uninstall` 하면 전부 사라진다. 훅(`.git/hooks/`)도 공유되므로 동작 자체는 일관된다 |
+| `SubagentStart` / `SubagentStop` | Opens and seals a bundle (`agents/<hash>`) |
+| `PostToolUse` (Claude Code `Task`, Codex `spawn_agent`) | Asks the parent agent to verify the sealed bundle |
+| `Stop` | Refuses to end the turn with unverified changes left |
+| git `pre-push` | Final boundary — `Stop` can be escaped with Esc |
 
-설계 근거는 [docs/DECISIONS.md](docs/DECISIONS.md) 참조. v2 아키텍처 전환 배경은 [docs/superpowers/specs/2026-07-30-kkochikkochi-v2-hybrid-design.md](docs/superpowers/specs/2026-07-30-kkochikkochi-v2-hybrid-design.md).
+Subagents cannot ask a human, so blocking them at `pre-commit` would leave
+them no way through. They are recorded in a ledger and enforced later instead.
 
-## License
+Everything the gate records lives inside `.git/` and is never committed ([D08](docs/DECISIONS.md), [D11](docs/DECISIONS.md)).
 
-MIT
+## Commands
+
+| Command | What it does |
+|---|---|
+| `/kk` | Quiz me on what's staged right now |
+| `/kk-log` | Show my verification history and my weakest axes |
+| `/kk-defer` | Batch this turn's subagent bundle quizzes to the end of the turn — this turn only, not a permanent bypass |
+
+## What it misses
+
+Measured during the v2 and v3 migrations, not guessed. The reasoning behind
+each is in [docs/DECISIONS.md](docs/DECISIONS.md).
+
+| | |
+|---|---|
+| **Ways out** — someone who wants past this gets past it | `--no-verify` ([D29](docs/DECISIONS.md)) · a commit hidden inside `make release` or `bash deploy.sh` · an agent we don't recognize ([D35](docs/DECISIONS.md)) · a harness that wraps its tools in a pty ([D41](docs/DECISIONS.md)) · `git -C <other repo> commit` ([D44](docs/DECISIONS.md)) |
+| **Ways it over-blocks** — you can be stopped when you shouldn't be | `pre-push` does not look at who wrote the commit ([D47](docs/DECISIONS.md)) · work cherry-picked or squashed in from others · paths containing a tab ([D08](docs/DECISIONS.md)) or a newline ([D43](docs/DECISIONS.md)) |
+| **Operational** | no `jq` opens the gate ([D42](docs/DECISIONS.md)) · records are never trimmed ([D18](docs/DECISIONS.md)) · `uninstall` deletes your audit log, and worktrees share it ([D11](docs/DECISIONS.md)) · a stale remote-tracking ref re-checks commits that are already pushed — `git fetch` clears it |
+
+None of these lock you out. Every over-block has a way through, and the last
+resort is always `--no-verify`.
+
+> This is a discipline device, not a security boundary.
+> It is not built to survive someone who wants around it.
+> It is built so that *not thinking* is no longer the path of least resistance.
+
+## Docs · License
+
+- [docs/DECISIONS.md](docs/DECISIONS.md) — every design decision and every rejected alternative. Start at D00; it is the premise the rest answer to.
+- [CONTRIBUTING.md](CONTRIBUTING.md) — development setup, tests, and the design rules this codebase holds to. Written in Korean.
+- [AGENTS.md](AGENTS.md) — install runbook for an agent doing this for you.
+- [v2 architecture](docs/superpowers/specs/2026-07-30-kkochikkochi-v2-hybrid-design.md) — why the gate moved into a git hook.
+
+MIT.
