@@ -23,7 +23,7 @@ Works with Claude Code and Codex.
 
 ## See it work
 
-An agent commits, the gate stops it, the agent runs the skill, and the quiz follows. Everything below is the program's real output; the lines starting with `#` are English glosses added here, not part of it.
+An agent commits, the gate stops it, the agent runs the skill, and the quiz follows. The gate's message is verbatim; the quiz under it is representative, because the skill writes those questions fresh for each change. The lines starting with `#` are English glosses added here, part of neither.
 
 ```
 $ git commit -m "add auth middleware"

@@ -14,7 +14,7 @@
 에이전틱 코딩의 병목은 타이핑 속도였던 적이 없다. 병목은 사람의 이해이고,
 가장 건너뛰기 쉬운 것도 그 이해다.
 
-KkochiKkochi 는 그 건너뛰기가 일어나는 자리에 벽을 세운다. 에이전트가 멈추고
+KkochiKkochi 는 그렇게 건너뛰는 바로 그 자리에 벽을 세운다. 에이전트가 멈추고
 *사람의* 답을 기다린다. 답하지 못하면 커밋이 막힌다.
 
 Claude Code 와 Codex 를 지원한다.
@@ -25,7 +25,7 @@ Claude Code 와 Codex 를 지원한다.
 
 ## 동작
 
-에이전트가 커밋하면 게이트가 막는다. 에이전트가 스킬을 실행하면 퀴즈가 이어진다. 아래는 전부 실제 출력이다.
+에이전트가 커밋하면 게이트가 막는다. 에이전트가 스킬을 실행하면 퀴즈가 이어진다. 게이트가 뱉는 메시지는 그대로이고, 그 아래 퀴즈는 예시다 — 문항은 스킬이 변경마다 새로 쓴다.
 
 ```
 $ git commit -m "add auth middleware"
@@ -68,7 +68,7 @@ codex plugin marketplace add pereng11/kkochikkochi
 codex plugin add kkochikkochi@kkochikkochi
 ```
 
-git 훅은 `.git/hooks/` 에 있고 git 이 추적하지 않는다. 그래서 저장소마다 따로 설치해야 하고, `git clone` 을 따라가지도 않는다 — 새로 clone 한 저장소는 거기에도 게이트를 설치하기 전까지 게이트가 없는 상태로 시작한다. 직접 할 필요는 보통 없다. 어떤 저장소에서 에이전트가 처음 커밋을 시도하면 에이전트 훅이 git 훅의 부재(또는 낡음)를 감지해 그 커밋을 거부하고, 그대로 실행할 수 있는 설치 명령을 에이전트에게 건넨다. 에이전트가 그 명령을 실행한 뒤 다시 커밋하면 된다 — 거부된 커밋 자체가 이어지는 것은 아니다. 예외는 `core.hooksPath` 를 쓰는 저장소뿐이다 — 그 경우 실효 훅 디렉터리가 저장소에 추적되는 곳이라, 에이전트가 말없이 쓰지 않고 사용자에게 확인을 구한다([D32](docs/DECISIONS.md)).
+git 훅은 `.git/hooks/` 에 있고 git 이 추적하지 않는다. 그래서 저장소마다 따로 설치해야 하고, `git clone` 을 따라가지도 않는다 — 저장소를 새로 clone 하면 게이트가 없는 상태로 시작하고, 그 저장소에서 다시 설치해야 한다. 직접 할 필요는 보통 없다. 에이전트가 어떤 저장소에서 처음 커밋을 시도하면 에이전트 훅이 git 훅의 부재(또는 낡음)를 감지해 그 커밋을 거부하고, 그대로 실행할 수 있는 설치 명령을 에이전트에게 건넨다. 에이전트가 그 명령을 실행한 뒤 다시 커밋하면 된다 — 거부된 커밋 자체가 이어지는 것은 아니다. 예외는 `core.hooksPath` 를 쓰는 저장소뿐이다 — 그 경우 실효 훅 디렉터리가 저장소에 추적되는 곳이라, 에이전트가 말없이 쓰지 않고 사용자에게 확인을 구한다([D32](docs/DECISIONS.md)).
 
 수동으로 하려면 `bash scripts/install.sh install` · `uninstall` · `status` 를 실행한다. `status` 의 종료 코드는 `0` 설치됨(그리고 최신) · `1` 미설치 · `2` `core.hooksPath` 저장소라 설치를 거부함 · `3` 우리 훅이지만 낡음 — 마지막 경우는 `install` 을 다시 실행하면 된다. 기존 `pre-commit` 훅이 있으면 갈아치우지 않고 체이닝한다 — 먼저 실행하고, 0 이 아닌 코드로 끝나면 커밋도 그 코드로 거기서 끝난다([D31](docs/DECISIONS.md)).
 
@@ -87,7 +87,7 @@ git 훅은 `.git/hooks/` 에 있고 git 이 추적하지 않는다. 그래서 �
 
 `git push --no-verify` 도 사정이 같다. 에이전트 훅이 `push` 도 같이 보고 거부를 시도하지만 역시 최선 노력일 뿐 보장이 아니다. 이 거부는 명령에 `git` 이나 `g` 토큰이 있을 때만 들어가므로 다른 별칭으로 곁들인 `--no-verify` 는 잡지 못하고, 핸드셰이크를 남기는 프리필터는 여전히 `commit` 만 본다([D29](docs/DECISIONS.md), [D44](docs/DECISIONS.md)). 위 목록에 없는 에이전트가 만든 커밋은 애매한 경우로 분류되고, 애매한 경우는 통과시킨다([D35](docs/DECISIONS.md)).
 
-충돌한 merge·cherry-pick·revert·rebase 를 마무리하려고 직접 치는 `git commit` 도 제외된다 — 진행 중 마커(`MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`, rebase 디렉터리)가 보이면 게이트가 비켜선다. `git commit --amend` 에는 따로 규칙을 두지 않았다 — 메시지만 고치는 amend 는 새로 스테이징되는 변경분이 없어 그냥 통과하고, 내용을 얹는 amend 는 얹은 그만큼이 게이트 대상이 된다([D12](docs/DECISIONS.md)).
+충돌한 merge·cherry-pick·revert·rebase 를 마무리하려고 직접 치는 `git commit` 도 제외된다 — 진행 중 마커(`MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`, rebase 디렉터리)가 보이면 게이트가 비켜선다. `git commit --amend` 에는 따로 규칙을 두지 않았다 — 메시지만 고치는 amend 는 새로 스테이징되는 변경분이 없어 그냥 통과하고, 내용을 더 얹는 amend 는 그 추가분만큼 게이트 대상이다([D12](docs/DECISIONS.md)).
 
 ## 무엇을 묻는가
 
@@ -139,12 +139,12 @@ v2 와 v3 마이그레이션 중 실측으로 확인된 것들이다. 추측이 
 최후 수단은 늘 `--no-verify` 다.
 
 > 이것은 규율 장치이지 보안 경계가 아니다.
-> 작정하고 우회하려는 사람을 견디도록 만들지 않았다.
+> 작정하고 우회하려는 사람을 막아내도록 만들지 않았다.
 > *생각하지 않는 것*이 가장 편한 길이 되지 않게 하려고 만들었다.
 
 ## 문서 · 라이선스
 
-- [docs/DECISIONS.md](docs/DECISIONS.md) — 모든 설계 결정과 버린 대안. D00 부터 읽으면 된다. 나머지가 답하고 있는 전제다.
+- [docs/DECISIONS.md](docs/DECISIONS.md) — 모든 설계 결정과 버린 대안. D00 부터 읽으면 된다. 나머지가 답하는 전제다.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — 개발 환경, 테스트, 이 코드베이스가 지키는 설계 규칙.
 - [AGENTS.md](AGENTS.md) — 에이전트에게 설치를 맡길 때 쓰는 런북.
 - [v2 아키텍처](docs/superpowers/specs/2026-07-30-kkochikkochi-v2-hybrid-design.md) — 게이트가 왜 git 훅 안으로 옮겨 갔는지.
