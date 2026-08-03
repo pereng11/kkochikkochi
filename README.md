@@ -6,18 +6,23 @@
 
 > **KkochiKkochi** *(kko-chi-kko-chi)* — Korean, adv. *questioning in relentless, minute detail.*
 
-**Not a tool to ship faster.
-A tool to ship responsibly.**
+An agent writes hundreds of lines in seconds.
+No one holds all of that context.
+The bottleneck in agentic coding is no longer how fast code gets written — it is
+how fast a person understands it.
 
-How many lines did you merge today? How many did you actually read?
+So instead of understanding the code, we wave it through.
 
-The bottleneck in agentic coding was never typing speed. It's your own
-comprehension — and the cheapest thing to skip is understanding.
+That moment is faster. The responsibility still comes back, to whoever you are later.
 
-KkochiKkochi puts a wall exactly where the skipping happens: your agent
-stops, and waits for *your* answer. Miss it, and the commit does not land.
+KkochiKkochi asks before the commit lands:
+**"What did you change, and why?"**
+
+A change you cannot explain does not get committed.
 
 Works with Claude Code and Codex.
+
+> The Korean edition is the source of truth. Where the two differ, follow [README.ko.md](README.ko.md).
 
 **English** · [한국어](README.ko.md)
 
