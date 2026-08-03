@@ -108,7 +108,7 @@ A tool to ship responsibly.**
 How many lines did you merge today?
 How many did you actually read?
 
-The bottleneck in AI-assisted coding was never typing speed.
+The bottleneck in agentic coding was never typing speed.
 It's your own comprehension — and the cheapest thing to skip
 is understanding.
 
@@ -118,6 +118,8 @@ the commit does not land.
 ```
 
 논지 세 개가 이 순서로 들어가야 한다. ① 속도가 아니라 책임. ② 병목은 사람의 인지부하이고 위험한 것은 게으름. ③ 에이전트가 멈추고 답을 기다리는 순간을 만들어 강제로 이해시킨다.
+
+**용어는 `agentic coding` 을 쓴다. `AI-assisted coding` 을 쓰지 않는다.** 2026-08-03 조사 결과, `AI-assisted coding` 은 자동완성 시대까지 포함하는 우산 범주라 에이전트가 커밋을 만드는 이 도구의 상황을 가리키지 못한다. 현재 표준어는 Karpathy 가 2026년에 내놓은 `agentic engineering` 계열이고, 문장 안에서 활동을 가리킬 때는 `agentic coding` 이 자연스럽다. `vibe coding`(Karpathy 2025년 초, Collins 2025 올해의 단어, "꼼꼼히 살피지 않고 받아들이는 것")은 이 도구가 막으려는 실패 모드와 정의가 일치해 유혹적이지만, 밈에 기대는 만큼 유행이 지나면 낡으므로 쓰지 않는다.
 
 ### 5.1 `## See it work` (~20줄)
 
@@ -186,6 +188,8 @@ the commit does not land.
 ## 6. `README.ko.md` 명세
 
 `README.md` 의 한국어 미러. 섹션 구조와 순서를 1:1 로 맞춘다. 상단에 정본 표기.
+
+`agentic coding` 은 한국어에서 `에이전틱 코딩` 으로 음차하되, 문맥상 어색하면 `에이전트가 코드를 쓰는 개발` 처럼 풀어 쓴다. `AI 보조 코딩` 으로 옮기지 않는다 — 영어에서 피한 우산 범주를 한국어로 되살리는 셈이 된다.
 
 한국어 문장은 리터럴로 작성한다 — `\uXXXX` 이스케이프를 쓰지 않는다. 긴 산문은 파일에 쓴 뒤 읽어서 검토한다. 번역투가 남으면 `im-not-ai` 의 `humanize-korean` 규칙을 참고해 다듬는다.
 
