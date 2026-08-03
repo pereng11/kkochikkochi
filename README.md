@@ -23,25 +23,39 @@ Works with Claude Code and Codex.
 
 ## See it work
 
+An agent commits, the gate stops it, the agent runs the skill, and the quiz follows. Everything below is the program's real output; the lines starting with `#` are English glosses added here, not part of it.
+
 ```
 $ git commit -m "add auth middleware"
 
-🦡 KkochiKkochi — this commit still contains changes nobody has verified.
+🦡 KkochiKkochi — 이 커밋에 아직 검증되지 않은 변경이 있습니다.
+#  this commit still contains changes nobody has verified
+
    src/auth/middleware.ts
    src/lib/session.ts
-Run the kkochikkochi skill, pass the quiz, then commit again.
 
-Q1. Which paths does the auth middleware let through after this change?
-    A) all of /api/*                    C) static assets only
-    B) everything except /api/public/*  D) I don't know
+이 변경을 이해했는지 먼저 확인해야 합니다.
+kkochikkochi 스킬을 실행해 퀴즈를 통과한 뒤 다시 커밋하세요.
+#  confirm you understood these changes: run the kkochikkochi skill, pass the quiz, commit again
+(판별 신호: handshake:claude-code)   #  the signal that classified this commit as an agent's
+
+Q1. 이 변경으로 auth 미들웨어가 통과시키는 경로는?
+#   which paths does the auth middleware let through after this change?
+    A) /api/* 전체                    #  all of /api/*
+    B) /api/public/* 을 제외한 전체   #  everything except /api/public/*
+    C) 정적 에셋만                    #  static assets only
+    D) 모르겠다                       #  I don't know
+
 → B  ✓
 
-Q2. In one sentence: why JWT for the session store instead of Redis?
+Q2. 세션 저장소를 Redis 대신 JWT 로 간 이유를 한 문장으로 적으세요.
+#   in one sentence, why JWT instead of Redis for the session store?
 → ...
-Passed. Commit again.
+
+통과했습니다. 다시 커밋하세요.   #  passed — commit again
 ```
 
-In Claude Code the multiple-choice questions arrive through `AskUserQuestion` and you click an answer. Codex has no equivalent tool, so they are printed as plain text and you type the answer — the questions, the grading, and the wrong-answer loop are the same on both.
+The gate's messages and its questions are Korean today, because the hook text and the skill that writes the questions are both authored in Korean; localization is planned. In Claude Code the multiple-choice questions arrive through `AskUserQuestion` and you click an answer. Codex has no equivalent tool, so they are printed as plain text and you type the answer. The questions, the grading, and the wrong-answer loop are the same on both.
 
 ## Install
 
@@ -56,13 +70,13 @@ codex plugin marketplace add pereng11/kkochikkochi
 codex plugin add kkochikkochi@kkochikkochi
 ```
 
-Git hooks are per repository, and you rarely have to install them yourself: the first time an agent tries to commit here, the agent hook notices that the git hook is absent or stale, refuses that commit, and hands the agent a runnable install command — the agent runs it and then tries the commit again, since the refused commit does not resume on its own. The exception is a repository using `core.hooksPath`, where the effective hook directory is tracked by the repository, so the agent asks you before writing to it ([D32](docs/DECISIONS.md)).
+Git hooks live in `.git/hooks/`, which git does not track. That makes them per repository, and it means they do not survive a `git clone` — a fresh clone starts ungated until the gate is installed there too. You rarely have to do that yourself. The first time an agent tries to commit in a repository, the agent hook notices the git hook is absent or stale, refuses that commit, and hands the agent a runnable install command. The agent runs it and then commits again; the refused commit does not resume on its own. Repositories that set `core.hooksPath` are the exception — the effective hook directory there is tracked by the repository, so the agent asks you before writing to it ([D32](docs/DECISIONS.md)).
 
-By hand: `bash scripts/install.sh install|uninstall|status`, where `status` exits `0` installed and current, `1` not installed, `2` refused because the repository uses `core.hooksPath`, `3` ours but stale. An existing `pre-commit` hook is chained rather than replaced, and runs first. The gate reads what an agent is about to commit. It never touches commits you type yourself.
+To do it by hand, run `bash scripts/install.sh install`, `uninstall`, or `status`. `status` exits `0` when the gate is installed and current, `1` when it is not installed, `2` when it refused because the repository sets `core.hooksPath`, and `3` when the installed hook is KkochiKkochi's but out of date — rerun `install` to refresh it. An existing `pre-commit` hook is chained rather than replaced: it runs first, and if it exits non-zero the commit ends there with that exit code ([D31](docs/DECISIONS.md)).
 
-Requires `git` and `jq`. Optionally the `humanize-korean` skill from [im-not-ai](https://github.com/epoko77-ai/im-not-ai), which polishes the wording of questions — the gate works the same without it ([D46](docs/DECISIONS.md)).
+The gate reads what an agent is about to commit. It never touches commits you type yourself ([D47](docs/DECISIONS.md)).
 
-Setting this up with an agent? See [AGENTS.md](AGENTS.md).
+Requires `git` and `jq`. Optionally the `humanize-korean` skill from [im-not-ai](https://github.com/epoko77-ai/im-not-ai), which polishes the wording of questions — the gate works the same without it ([D46](docs/DECISIONS.md)). Setting this up with an agent? See [AGENTS.md](AGENTS.md).
 
 ## What gets gated
 
@@ -73,7 +87,9 @@ Setting this up with an agent? See [AGENTS.md](AGENTS.md).
 | `git revert` · `cherry-pick` · `merge` | **Off at commit time.** git never calls `pre-commit` for these (measured). `pre-push` still re-reads what a merge commit newly created ([D13](docs/DECISIONS.md), [D47](docs/DECISIONS.md)). |
 | `git commit --no-verify` (or `-n`) | **Bypassable.** The agent hook tries to refuse it — best effort, not a guarantee ([D29](docs/DECISIONS.md)). |
 
-A commit made by an agent that is not on that list is treated as an ambiguous case, and ambiguous cases pass ([D35](docs/DECISIONS.md)).
+`git push --no-verify` is the same story: the agent hook watches `push` as well and tries to refuse it, still best effort and not a guarantee. That refusal only engages when the command carries a `git` or `g` token, so `--no-verify` under some other alias goes unnoticed, and the prefilter that writes the handshake still looks at `commit` alone ([D29](docs/DECISIONS.md), [D44](docs/DECISIONS.md)). A commit made by an agent that is not on the list above is treated as an ambiguous case, and ambiguous cases pass ([D35](docs/DECISIONS.md)).
+
+A `git commit` you run to finish a conflicted merge, cherry-pick, revert, or rebase is excluded too: the gate sees the in-progress marker (`MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`, or a rebase directory) and steps aside. `git commit --amend` needs no rule of its own — amending the message alone stages no new delta and passes, while an amend that adds content is gated on exactly what it added ([D12](docs/DECISIONS.md)).
 
 ## What it asks
 
@@ -88,7 +104,7 @@ At most five questions, and as a rule at least one — the exception is a change
 
 ## How it holds
 
-Two hooks split the work. The agent hook (`PreToolUse`) does anything only when the command contains `commit`: it leaves a handshake saying an agent is about to commit, and it health-checks whether the git hook is installed and current. It is not itself the gate — nothing about safety breaks if it misses something there. The gate is git's `pre-commit`, and because git calls it directly, the `git diff --cached` inside it is the content of the commit itself, so no command string has to be parsed ([D28](docs/DECISIONS.md), [D30](docs/DECISIONS.md), [D44](docs/DECISIONS.md)).
+Two hooks split the work, and only one of them is the gate. The agent hook (`PreToolUse`) does two separate jobs. It tries to refuse `--no-verify` and its short form `-n` on any command that names `git` and looks like a commit or a push. Then, only when the command contains `commit`, it leaves a handshake saying an agent is about to commit and health-checks whether this repository's git hook is installed and current. Neither job is the gate: if the agent hook misses a case, what sits underneath is unaffected. That is git's `pre-commit`. git calls it directly, so the `git diff --cached` inside it is the content of the commit itself, and no command string has to be parsed ([D28](docs/DECISIONS.md), [D30](docs/DECISIONS.md), [D44](docs/DECISIONS.md)).
 
 | Trigger | What it does |
 |---|---|
