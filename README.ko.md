@@ -70,9 +70,9 @@ codex plugin add kkochikkochi@kkochikkochi
 
 git 훅은 `.git/hooks/` 에 있고 git 이 추적하지 않는다. 그래서 저장소마다 따로 설치해야 하고, `git clone` 을 따라가지도 않는다 — 저장소를 새로 clone 하면 게이트가 없는 상태로 시작하고, 그 저장소에서 다시 설치해야 한다. 직접 할 필요는 보통 없다. 에이전트가 어떤 저장소에서 처음 커밋을 시도하면 에이전트 훅이 git 훅의 부재(또는 낡음)를 감지해 그 커밋을 거부하고, 그대로 실행할 수 있는 설치 명령을 에이전트에게 건넨다. 에이전트가 그 명령을 실행한 뒤 다시 커밋하면 된다 — 거부된 커밋 자체가 이어지는 것은 아니다. 예외는 `core.hooksPath` 를 쓰는 저장소뿐이다 — 그 경우 실효 훅 디렉터리가 저장소에 추적되는 곳이라, 에이전트가 말없이 쓰지 않고 사용자에게 확인을 구한다([D32](docs/DECISIONS.md)).
 
-수동으로 하려면 `bash scripts/install.sh install` · `uninstall` · `status` 를 실행한다. `status` 의 종료 코드는 `0` 설치됨(그리고 최신) · `1` 미설치 · `2` `core.hooksPath` 저장소라 설치를 거부함 · `3` 우리 훅이지만 낡음 — 마지막 경우는 `install` 을 다시 실행하면 된다. 기존 `pre-commit` 훅이 있으면 갈아치우지 않고 체이닝한다 — 먼저 실행하고, 0 이 아닌 코드로 끝나면 커밋도 그 코드로 거기서 끝난다([D31](docs/DECISIONS.md)).
+수동으로 하려면 게이트를 걸 저장소 안에서 `bash <플러그인 디렉터리>/scripts/install.sh install` · `uninstall` · `status` 를 실행한다. `status` 의 종료 코드는 `0` 설치됨(그리고 최신) · `1` 미설치 · `2` `core.hooksPath` 저장소라 설치를 거부함 · `3` 우리 훅이지만 낡음 — 마지막 경우는 `install` 을 다시 실행하면 된다. 기존 `pre-commit` 훅이 있으면 갈아치우지 않고 체이닝한다 — 먼저 실행하고, 0 이 아닌 코드로 끝나면 커밋도 그 코드로 거기서 끝난다([D31](docs/DECISIONS.md)).
 
-게이트는 에이전트가 커밋하려는 내용을 읽는다. 사람이 직접 친 커밋에는 손대지 않는다([D47](docs/DECISIONS.md)).
+커밋 시점의 게이트는 에이전트가 커밋하려는 내용만 읽고, 사람이 직접 친 커밋에는 손대지 않는다([D33](docs/DECISIONS.md), [D41](docs/DECISIONS.md)). 단서는 `pre-push` 다 — 커밋을 누가 썼는지 사후에 알아낼 방법이 없어서 사람이 친 커밋도 다시 검사한다([D47](docs/DECISIONS.md)).
 
 필요 도구는 `git` 과 `jq`. 선택으로 [im-not-ai](https://github.com/epoko77-ai/im-not-ai) 의 `humanize-korean` 스킬을 쓰면 문항 문장을 다듬어 주지만, 없어도 게이트는 그대로 동작한다([D46](docs/DECISIONS.md)). 이 설치를 에이전트에게 맡길 거라면 [AGENTS.md](AGENTS.md) 를 보면 된다.
 
@@ -131,7 +131,7 @@ v2 와 v3 마이그레이션 중 실측으로 확인된 것들이다. 추측이 
 
 | | |
 |---|---|
-| **빠져나가는 길** — 작정하고 우회하는 사람은 우회한다 | `--no-verify`([D29](docs/DECISIONS.md)) · `make release` 나 `bash deploy.sh` 안에 숨은 커밋 · 우리가 모르는 에이전트([D35](docs/DECISIONS.md)) · 도구를 pty 로 감싸는 하네스([D41](docs/DECISIONS.md)) · `git -C <다른 저장소> commit`([D44](docs/DECISIONS.md)) |
+| **빠져나가는 길** — 작정하고 우회하는 사람은 우회한다 | `--no-verify`([D29](docs/DECISIONS.md)) · `make release` 나 `bash deploy.sh` 안에 숨은 커밋 · 우리가 모르는 에이전트([D35](docs/DECISIONS.md)) · 도구를 pty 로 감싸는 하네스([D41](docs/DECISIONS.md)) · `git -C <다른 저장소> commit`([D44](docs/DECISIONS.md)) · 퀴즈 없이 `record-pass.sh` 를 직접 부르는 에이전트 — 빈 답변은 거부되지만, 그 뒤로는 기록을 열어 보는 수밖에 없다([D10](docs/DECISIONS.md)) |
 | **과하게 막는 길** — 막히지 않아야 할 때 막힐 수 있다 | `pre-push` 는 커밋을 누가 썼는지 보지 않는다([D47](docs/DECISIONS.md)) · 남에게서 cherry-pick 하거나 squash 해 온 작업 · 경로에 탭([D08](docs/DECISIONS.md))이나 개행([D43](docs/DECISIONS.md))이 든 파일 |
 | **운영** | `jq` 가 없으면 게이트가 열린다([D42](docs/DECISIONS.md)) · 기록은 자동으로 정리되지 않는다([D18](docs/DECISIONS.md)) · `uninstall` 은 감사 로그까지 지우고 워크트리는 그 로그를 공유한다([D11](docs/DECISIONS.md)) · 리모트 추적 ref 가 stale 하면 이미 push 된 커밋을 다시 검사한다 — `git fetch` 하면 풀린다 |
 

@@ -34,12 +34,17 @@ survive `git clone` and must be installed in every repository.
 
 You normally do not have to do this by hand. The first time you try to commit
 in a repository, the agent hook detects a missing or stale git hook, refuses
-that commit, and hands you the exact command. Run it, then **retry the commit**
-— the refused commit does not resume on its own.
+that commit, and hands you the exact command with the path already expanded.
+Run it, then **retry the commit** — the refused commit does not resume on its
+own.
+
+Run these from inside the user's repository — the script lives in the plugin
+cache, but it installs into whichever repository is the current directory.
+Claude Code sets `CLAUDE_PLUGIN_ROOT`; Codex sets `PLUGIN_ROOT`.
 
 ```bash
-bash scripts/install.sh install
-bash scripts/install.sh status
+bash "${CLAUDE_PLUGIN_ROOT:-$PLUGIN_ROOT}/scripts/install.sh" install
+bash "${CLAUDE_PLUGIN_ROOT:-$PLUGIN_ROOT}/scripts/install.sh" status
 ```
 
 `status` exit codes:

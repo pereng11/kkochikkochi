@@ -23,7 +23,7 @@ Works with Claude Code and Codex.
 
 ## See it work
 
-An agent commits, the gate stops it, the agent runs the skill, and the quiz follows. The gate's message is verbatim; the quiz under it is representative, because the skill writes those questions fresh for each change. The lines starting with `#` are English glosses added here, part of neither.
+An agent commits, the gate stops it, the agent runs the skill, and the quiz follows. The gate's message is verbatim; the quiz under it is representative, because the skill writes those questions fresh for each change. Text after `#` is an English gloss added here, part of neither.
 
 ```
 $ git commit -m "add auth middleware"
@@ -72,9 +72,9 @@ codex plugin add kkochikkochi@kkochikkochi
 
 Git hooks live in `.git/hooks/`, which git does not track. That makes them per repository, and it means they do not survive a `git clone` — a fresh clone starts ungated until the gate is installed there too. You rarely have to do that yourself. The first time an agent tries to commit in a repository, the agent hook notices the git hook is absent or stale, refuses that commit, and hands the agent a runnable install command. The agent runs it and then commits again; the refused commit does not resume on its own. Repositories that set `core.hooksPath` are the exception — the effective hook directory there is tracked by the repository, so the agent asks you before writing to it ([D32](docs/DECISIONS.md)).
 
-To do it by hand, run `bash scripts/install.sh install`, `uninstall`, or `status`. `status` exits `0` when the gate is installed and current, `1` when it is not installed, `2` when it refused because the repository sets `core.hooksPath`, and `3` when the installed hook is KkochiKkochi's but out of date — rerun `install` to refresh it. An existing `pre-commit` hook is chained rather than replaced: it runs first, and if it exits non-zero the commit ends there with that exit code ([D31](docs/DECISIONS.md)).
+To do it by hand, run `bash <plugin-dir>/scripts/install.sh install`, `uninstall`, or `status` from inside the repository you want gated. `status` exits `0` when the gate is installed and current, `1` when it is not installed, `2` when it refused because the repository sets `core.hooksPath`, and `3` when the installed hook is KkochiKkochi's but out of date — rerun `install` to refresh it. An existing `pre-commit` hook is chained rather than replaced: it runs first, and if it exits non-zero the commit ends there with that exit code ([D31](docs/DECISIONS.md)).
 
-The gate reads what an agent is about to commit. It never touches commits you type yourself ([D47](docs/DECISIONS.md)).
+At commit time the gate reads what an agent is about to commit and leaves commits you type yourself alone ([D33](docs/DECISIONS.md), [D41](docs/DECISIONS.md)). `pre-push` is the caveat: it cannot tell after the fact who wrote a commit, so it re-checks yours too ([D47](docs/DECISIONS.md)).
 
 Requires `git` and `jq`. Optionally the `humanize-korean` skill from [im-not-ai](https://github.com/epoko77-ai/im-not-ai), which polishes the wording of questions — the gate works the same without it ([D46](docs/DECISIONS.md)). Setting this up with an agent? See [AGENTS.md](AGENTS.md).
 
@@ -133,7 +133,7 @@ each is in [docs/DECISIONS.md](docs/DECISIONS.md).
 
 | | |
 |---|---|
-| **Ways out** — someone who wants past this gets past it | `--no-verify` ([D29](docs/DECISIONS.md)) · a commit hidden inside `make release` or `bash deploy.sh` · an agent we don't recognize ([D35](docs/DECISIONS.md)) · a harness that wraps its tools in a pty ([D41](docs/DECISIONS.md)) · `git -C <other repo> commit` ([D44](docs/DECISIONS.md)) |
+| **Ways out** — someone who wants past this gets past it | `--no-verify` ([D29](docs/DECISIONS.md)) · a commit hidden inside `make release` or `bash deploy.sh` · an agent we don't recognize ([D35](docs/DECISIONS.md)) · a harness that wraps its tools in a pty ([D41](docs/DECISIONS.md)) · `git -C <other repo> commit` ([D44](docs/DECISIONS.md)) · an agent that calls `record-pass.sh` without running the quiz — empty answers are rejected, and past that only reading the record shows it ([D10](docs/DECISIONS.md)) |
 | **Ways it over-blocks** — you can be stopped when you shouldn't be | `pre-push` does not look at who wrote the commit ([D47](docs/DECISIONS.md)) · work cherry-picked or squashed in from others · paths containing a tab ([D08](docs/DECISIONS.md)) or a newline ([D43](docs/DECISIONS.md)) |
 | **Operational** | no `jq` opens the gate ([D42](docs/DECISIONS.md)) · records are never trimmed ([D18](docs/DECISIONS.md)) · `uninstall` deletes your audit log, and worktrees share it ([D11](docs/DECISIONS.md)) · a stale remote-tracking ref re-checks commits that are already pushed — `git fetch` clears it |
 
