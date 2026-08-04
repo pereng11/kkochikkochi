@@ -2,6 +2,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Claude Code · Codex](https://img.shields.io/badge/Claude%20Code-%C2%B7%20Codex-black)
 
+**English** • [한국어](README.ko.md)
+
 # KkochiKkochi 🦡
 
 > **KkochiKkochi** *(kko-chi-kko-chi)* — Korean, adv. *questioning in relentless, minute detail.*
@@ -20,11 +22,8 @@ KkochiKkochi asks before the commit lands:
 
 A change you cannot explain does not get committed.
 
-Works with Claude Code and Codex.
-
-> The Korean edition is the source of truth. Where the two differ, follow [README.ko.md](README.ko.md).
-
-**English** · [한국어](README.ko.md)
+Works with Claude Code and Codex. A [Korean edition](README.ko.md) is kept in step
+with this one; where the two differ, this one is the source of truth.
 
 ## See it work
 

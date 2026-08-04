@@ -2,6 +2,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Claude Code · Codex](https://img.shields.io/badge/Claude%20Code-%C2%B7%20Codex-black)
 
+[English](README.md) • **한국어**
+
 # KkochiKkochi 🦡
 
 > **꼬치꼬치** — 부사. *낱낱이 따지고 캐어묻는 모양.*
@@ -20,11 +22,8 @@
 
 설명하지 못하는 변경은, 커밋할 수 없습니다.
 
-Claude Code 와 Codex 를 지원합니다.
-
-> 이 문서가 정본입니다. [영어판](README.md)과 어긋나면 이 문서를 따르세요.
-
-[English](README.md) · **한국어**
+Claude Code 와 Codex 를 지원합니다. 이 문서는 [영어판](README.md)과 나란히 관리합니다.
+둘이 어긋나면 영어판이 정본입니다.
 
 ## 동작
 
