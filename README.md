@@ -46,13 +46,13 @@ kkochikkochi 스킬을 실행해 퀴즈를 통과한 뒤 다시 커밋하세요.
 Q1. 이 변경으로 auth 미들웨어가 통과시키는 경로는?
 #   which paths does the auth middleware let through after this change?
     A) /api/* 전체                    #  all of /api/*
-    B) /api/public/* 을 제외한 전체   #  everything except /api/public/*
+    B) /api/public/*을 제외한 전체    #  everything except /api/public/*
     C) 정적 에셋만                    #  static assets only
     D) 모르겠다                       #  I don't know
 
 → B  ✓
 
-Q2. 세션 저장소를 Redis 대신 JWT 로 간 이유를 한 문장으로 적으세요.
+Q2. 세션 저장소를 Redis 대신 JWT로 간 이유를 한 문장으로 적으세요.
 #   in one sentence, why JWT instead of Redis for the session store?
 → ...
 
